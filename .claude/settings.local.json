@@ -1,0 +1,17 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(find:*)",
+      "WebSearch",
+      "Bash(cd:*)",
+      "mcp__supabase__apply_migration",
+      "Bash(grep -E \"\\\\.\\(sql|ts\\)$\")",
+      "Bash(npx tsc:*)",
+      "Bash(while read:*)",
+      "Bash(do echo:*)",
+      "Read(//d/Software/ForgeAI/**)",
+      "Bash(done)",
+      "mcp__supabase__execute_sql"
+    ]
+  }
+}

@@ -1,0 +1,39 @@
+# Dependências
+node_modules/
+
+# Build
+dist/
+dist-ssr/
+
+# Build artifacts
+*.tsbuildinfo
+*.d.ts
+!src/**/*.d.ts
+
+# Variáveis de ambiente — NUNCA commitar
+.env
+.env.*
+!.env.example
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Sistema operacional
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Testes
+coverage/
+
+# Logs
+*.log
+npm-debug.log*
+
+# Misc
+*.local
+.vercel

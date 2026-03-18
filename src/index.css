@@ -1,0 +1,68 @@
+/* Fontes — JetBrains Mono para código, Inter para UI */
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap");
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  /* Reset base para tema escuro do ForgeAI */
+  html {
+    color-scheme: dark;
+  }
+
+  body {
+    @apply bg-forge-bg text-forge-text;
+    font-family: "Inter", system-ui, sans-serif;
+    font-size: 14px;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  /* Scrollbar customizada — estilo escuro */
+  ::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: #0c1322;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background: #1e293b;
+    border-radius: 4px;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background: #334155;
+  }
+
+  /* Seleção de texto na cor do orquestrador */
+  ::selection {
+    background: rgba(59, 130, 246, 0.3);
+    color: #e2e8f0;
+  }
+}
+
+@layer components {
+  /* Glow sutil para elementos interativos */
+  .forge-glow {
+    box-shadow: 0 0 15px -3px currentColor;
+  }
+
+  /* Borda pulsante para status de review */
+  .forge-pulse-border {
+    animation: pulse-border 2s ease-in-out infinite;
+  }
+
+  @keyframes pulse-border {
+    0%,
+    100% {
+      border-color: rgba(99, 102, 241, 0.3);
+    }
+    50% {
+      border-color: rgba(99, 102, 241, 0.8);
+    }
+  }
+}

@@ -32,10 +32,10 @@ const ZONES: { value: OfficeZone; label: string }[] = [
 
 /** Posições automáticas baseadas na zona */
 const ZONE_POSITIONS: Record<OfficeZone, { x: number; y: number }> = {
-  research: { x: 430, y: 95 },
-  management: { x: 430, y: 285 },
-  development: { x: 430, y: 475 },
-  "qa-ops": { x: 430, y: 670 },
+  research: { x: 140, y: 160 },
+  management: { x: 570, y: 160 },
+  development: { x: 210, y: 500 },
+  "qa-ops": { x: 600, y: 540 },
 };
 
 const DEFAULT_COLORS = [

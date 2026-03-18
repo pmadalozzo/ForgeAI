@@ -5,8 +5,9 @@ import { AgentStatus } from "@/types/agents";
 import type { LLMProvider } from "@/types/agents";
 
 /**
- * Definição padrão dos 10 agentes do ForgeAI.
- * Cores, posições e zonas conforme especificado no CLAUDE.md.
+ * Definição padrão dos 12 agentes do ForgeAI.
+ * Cores, posições e zonas conforme CLAUDE.md.
+ * Canvas: 920x770 com 4 zonas empilhadas.
  */
 const agentesIniciais: Agent[] = [
   // === Zona Research (topo) — 1 agente ===
@@ -22,13 +23,13 @@ const agentesIniciais: Agent[] = [
     provider: "claude-code",
     linesWritten: 0,
     desk: {
-      position: { x: 430, y: 95 },
+      position: { x: 430, y: 80 },
       items: ["pilha-papeis", "caneca-cafe"],
       zone: "research",
     },
   },
 
-  // === Zona Management — 3 agentes, deslocados +170px ===
+  // === Zona Management — 3 agentes ===
   {
     id: "orchestrator",
     name: "Orquestrador",
@@ -41,7 +42,7 @@ const agentesIniciais: Agent[] = [
     provider: "claude-code",
     linesWritten: 0,
     desk: {
-      position: { x: 430, y: 285 },
+      position: { x: 430, y: 250 },
       items: ["caneca-cafe", "monitor-extra"],
       zone: "management",
     },
@@ -58,7 +59,7 @@ const agentesIniciais: Agent[] = [
     provider: "claude-code",
     linesWritten: 0,
     desk: {
-      position: { x: 200, y: 285 },
+      position: { x: 200, y: 250 },
       items: ["pilha-papeis", "caneca-cafe"],
       zone: "management",
     },
@@ -75,13 +76,13 @@ const agentesIniciais: Agent[] = [
     provider: "claude-code",
     linesWritten: 0,
     desk: {
-      position: { x: 660, y: 285 },
+      position: { x: 660, y: 250 },
       items: ["post-its", "caneca-cafe"],
       zone: "management",
     },
   },
 
-  // === Zona Development (centro) — 3 agentes, deslocados +170px ===
+  // === Zona Development (centro) — 3 agentes ===
   {
     id: "frontend",
     name: "Frontend Dev",
@@ -94,7 +95,7 @@ const agentesIniciais: Agent[] = [
     provider: "claude-code",
     linesWritten: 0,
     desk: {
-      position: { x: 200, y: 475 },
+      position: { x: 200, y: 450 },
       items: ["vaso-planta", "caneca-cafe"],
       zone: "development",
     },
@@ -111,7 +112,7 @@ const agentesIniciais: Agent[] = [
     provider: "claude-code",
     linesWritten: 0,
     desk: {
-      position: { x: 430, y: 475 },
+      position: { x: 430, y: 450 },
       items: ["caneca-cafe", "pilha-papeis"],
       zone: "development",
     },
@@ -128,13 +129,13 @@ const agentesIniciais: Agent[] = [
     provider: "claude-code",
     linesWritten: 0,
     desk: {
-      position: { x: 660, y: 475 },
+      position: { x: 660, y: 450 },
       items: ["monitor-extra"],
       zone: "development",
     },
   },
 
-  // === Zona QA & Ops (base) — 5 agentes, deslocados +170px ===
+  // === Zona QA & Ops (base) — 5 agentes ===
   {
     id: "qa",
     name: "QA Engineer",
@@ -147,7 +148,7 @@ const agentesIniciais: Agent[] = [
     provider: "claude-code",
     linesWritten: 0,
     desk: {
-      position: { x: 100, y: 670 },
+      position: { x: 100, y: 640 },
       items: ["pilha-papeis"],
       zone: "qa-ops",
     },
@@ -164,7 +165,7 @@ const agentesIniciais: Agent[] = [
     provider: "claude-code",
     linesWritten: 0,
     desk: {
-      position: { x: 260, y: 670 },
+      position: { x: 260, y: 640 },
       items: ["caneca-cafe"],
       zone: "qa-ops",
     },
@@ -181,7 +182,7 @@ const agentesIniciais: Agent[] = [
     provider: "claude-code",
     linesWritten: 0,
     desk: {
-      position: { x: 420, y: 670 },
+      position: { x: 420, y: 640 },
       items: ["monitor-extra", "caneca-cafe"],
       zone: "qa-ops",
     },
@@ -198,7 +199,7 @@ const agentesIniciais: Agent[] = [
     provider: "claude-code",
     linesWritten: 0,
     desk: {
-      position: { x: 580, y: 670 },
+      position: { x: 580, y: 640 },
       items: ["vaso-planta", "post-its"],
       zone: "qa-ops",
     },
@@ -215,7 +216,7 @@ const agentesIniciais: Agent[] = [
     provider: "claude-code",
     linesWritten: 0,
     desk: {
-      position: { x: 740, y: 670 },
+      position: { x: 740, y: 640 },
       items: ["post-its", "caneca-cafe"],
       zone: "qa-ops",
     },
@@ -232,60 +233,24 @@ interface AgentsState {
   selectedAgentId: string | null;
 
   // --- Ações ---
-
-  /** Atualiza o status de um agente */
   setAgentStatus: (agentId: string, status: AgentStatus) => void;
-
-  /** Atualiza o progresso de um agente (0-100) */
   setAgentProgress: (agentId: string, progress: number) => void;
-
-  /** Define a tarefa atual de um agente */
   setAgentTask: (agentId: string, task: string | null) => void;
-
-  /** Troca o provider de LLM de um agente */
   setAgentProvider: (agentId: string, provider: LLMProvider) => void;
-
-  /** Incrementa o contador de linhas escritas */
   addLinesWritten: (agentId: string, lines: number) => void;
-
-  /** Seleciona um agente (ou null para deselecionar) */
   selectAgent: (agentId: string | null) => void;
-
-  /** Atualiza a posição da mesa (drag & drop) */
   updateDeskPosition: (agentId: string, x: number, y: number) => void;
-
-  /** Adiciona um walker (agente caminhando entre mesas) */
   addWalker: (walker: WalkRoute) => void;
-
-  /** Remove um walker quando chega ao destino */
   removeWalker: (agentId: string) => void;
-
-  /** Avança walkProgress de todos os walkers (chamado por rAF) */
   tickWalkers: (deltaMs: number) => void;
-
-  /** Reseta todos os agentes para idle */
   resetAll: () => void;
-
-  /** Adiciona um agente customizado */
   addAgent: (agent: Agent) => void;
-
-  /** Remove um agente */
   removeAgent: (agentId: string) => void;
-
-  /** Restaura os 10 agentes padrão */
   loadDefaultAgents: () => void;
-
-  /** Retorna um agente pelo ID */
   getAgent: (agentId: string) => Agent | undefined;
-
-  /** Retorna agentes filtrados por role */
   getAgentsByRole: (role: AgentRole) => Agent[];
 }
 
-/**
- * Store Zustand para estado dos agentes.
- * Centraliza toda a lógica de estado do escritório virtual.
- */
 export const useAgentsStore = create<AgentsState>()(
   devtools(
     (set, get) => ({
@@ -371,7 +336,7 @@ export const useAgentsStore = create<AgentsState>()(
       addWalker: (walker) =>
         set(
           (state) => ({
-            walkers: [...state.walkers.slice(-4), walker], // máx 5 walkers
+            walkers: [...state.walkers.slice(-4), walker],
           }),
           false,
           "addWalker",
@@ -386,9 +351,8 @@ export const useAgentsStore = create<AgentsState>()(
           "removeWalker",
         ),
 
-      /** Avança walkProgress de todos os walkers. Chamado por requestAnimationFrame no OfficeCanvas. */
       tickWalkers: (deltaMs: number) => {
-        const WALK_DURATION = 2500; // ms para ir de 0 a 1
+        const WALK_DURATION = 2500;
         set(
           (state) => {
             const updated = state.walkers

@@ -1,6 +1,7 @@
 /**
- * Elementos decorativos SVG do escritório virtual.
- * Bebedouro, quadro kanban, maquina de cafe, plantas decorativas.
+ * Elementos decorativos SVG do escritorio virtual.
+ * Bebedouro, quadro kanban, maquina de cafe, plantas decorativas,
+ * impressora, dashboard de metricas.
  * Posicoes calibradas para viewBox 920x600, distribuidas nas bordas e entre zonas.
  */
 
@@ -124,30 +125,54 @@ export function MetricsDashboard() {
 }
 
 /**
- * Agrupa decoracoes extras do escritorio.
- * As estantes, plantas e quadros principais agora sao renderizados inline nas zonas.
- * Aqui ficam apenas itens nos corredores entre salas.
+ * Agrupa todas as decoracoes do escritorio.
+ * Posicionadas para o canvas 920x600 com 3 zonas.
  */
 export function OfficeDecorations() {
   return (
     <g>
-      {/* Bebedouro no corredor 1 (Research → Management) */}
-      <g transform="translate(120, 222)">
+      {/* Bebedouro entre Management e Development */}
+      <g transform="translate(860, 200)">
         <WaterCooler />
       </g>
 
-      {/* Máquina de café no corredor 2 (Management → Development) */}
-      <g transform="translate(750, 412)">
+      {/* Quadro kanban na parede (zona Management) */}
+      <g transform="translate(56, 170)">
+        <KanbanBoard />
+      </g>
+
+      {/* Maquina de cafe entre Development e QA */}
+      <g transform="translate(56, 390)">
         <CoffeeMachine />
       </g>
 
-      {/* Impressora no corredor 3 (Development → QA) */}
-      <g transform="translate(120, 602)">
+      {/* Planta decorativa (canto superior esquerdo) */}
+      <g transform="translate(10, 10)">
+        <DecorativePlant />
+      </g>
+
+      {/* Planta decorativa (canto inferior direito) */}
+      <g transform="translate(895, 565)">
+        <DecorativePlant />
+      </g>
+
+      {/* Planta decorativa (canto superior direito) */}
+      <g transform="translate(895, 10)">
+        <DecorativePlant />
+      </g>
+
+      {/* Planta decorativa (canto inferior esquerdo) */}
+      <g transform="translate(10, 565)">
+        <DecorativePlant />
+      </g>
+
+      {/* Impressora (zona QA) */}
+      <g transform="translate(850, 450)">
         <Printer />
       </g>
 
-      {/* Dashboard de métricas na parede do QA */}
-      <g transform="translate(200, 622)">
+      {/* Dashboard de metricas (zona Ops) */}
+      <g transform="translate(850, 210)">
         <MetricsDashboard />
       </g>
     </g>

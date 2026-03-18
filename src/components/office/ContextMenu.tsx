@@ -1,7 +1,8 @@
 /**
- * Menu contextual SVG para agentes no escritorio virtual.
- * Aparece ao clicar com botao direito em um agente.
+ * Menu contextual SVG para agentes no escritório virtual.
+ * Design moderno com animações fluidas e glassmorphism.
  */
+import { useState, useEffect } from "react";
 import { useAgentsStore } from "@/stores/agents-store";
 import { AgentStatus } from "@/types/agents";
 import type { LLMProvider } from "@/types/agents";
@@ -36,10 +37,21 @@ const MENU_W = 110;
 const PROVIDER_W = 90;
 
 export function ContextMenu({ agentId, x, y, onClose }: ContextMenuProps) {
+  const [isVisible, setIsVisible] = useState(false);
+  const [hoveredItem, setHoveredItem] = useState<string | null>(null);
   const agent = useAgentsStore((s) => s.agents.find((a) => a.id === agentId));
   const setAgentStatus = useAgentsStore((s) => s.setAgentStatus);
   const setAgentProvider = useAgentsStore((s) => s.setAgentProvider);
   const selectAgent = useAgentsStore((s) => s.selectAgent);
+
+  useEffect(() => {
+    setIsVisible(true);
+  }, []);
+
+  const handleClose = () => {
+    setIsVisible(false);
+    setTimeout(onClose, 150);
+  };
 
   if (!agent) return null;
 
@@ -81,56 +93,118 @@ export function ContextMenu({ agentId, x, y, onClose }: ContextMenuProps) {
 
   return (
     <g>
-      {/* Overlay invisivel para capturar cliques fora */}
+      {/* Filtros SVG para glassmorphism */}
+      <defs>
+        <filter id="glass-blur" x="-50%" y="-50%" width="200%" height="200%">
+          <feGaussianBlur in="SourceGraphic" stdDeviation="2"/>
+        </filter>
+        <filter id="glass-shadow" x="-50%" y="-50%" width="200%" height="200%">
+          <feDropShadow dx="0" dy="4" stdDeviation="8" floodColor="#000" floodOpacity="0.3"/>
+        </filter>
+        <filter id="menu-glow" x="-50%" y="-50%" width="200%" height="200%">
+          <feGaussianBlur stdDeviation="3" result="coloredBlur"/>
+          <feMerge>
+            <feMergeNode in="coloredBlur"/>
+            <feMergeNode in="SourceGraphic"/>
+          </feMerge>
+        </filter>
+      </defs>
+
+      {/* Overlay invisível para capturar cliques fora */}
       <rect
         x="0"
         y="0"
         width="920"
         height="600"
         fill="transparent"
-        onClick={onClose}
+        onClick={handleClose}
       />
 
       {/* Menu principal */}
-      <g transform={`translate(${adjustedX}, ${adjustedY})`}>
+      <g
+        transform={`translate(${adjustedX}, ${adjustedY})`}
+        opacity={isVisible ? 1 : 0}
+        style={{
+          transition: "opacity 0.15s ease-out, transform 0.15s ease-out",
+          transform: isVisible ? "scale(1)" : "scale(0.95)",
+        }}
+      >
+        {/* Fundo glassmorphism */}
         <rect
           x="0"
           y="0"
           width={MENU_W}
           height={menuH}
-          rx="4"
-          fill="#1e293b"
-          stroke="#334155"
+          rx="6"
+          fill="rgba(15, 23, 42, 0.9)"
+          stroke="rgba(148, 163, 184, 0.1)"
           strokeWidth="1"
-          filter="url(#glow)"
+          filter="url(#glass-shadow)"
+        />
+
+        {/* Borda interna sutil */}
+        <rect
+          x="0.5"
+          y="0.5"
+          width={MENU_W - 1}
+          height={menuH - 1}
+          rx="5.5"
+          fill="none"
+          stroke="rgba(255, 255, 255, 0.05)"
+          strokeWidth="1"
         />
 
         {items.map((item, i) => (
           <g
             key={item.label}
-            transform={`translate(0, ${i * ITEM_H + 3})`}
+            transform={`translate(0, ${i * ITEM_H + 4})`}
             onClick={(e) => {
               e.stopPropagation();
               item.action();
             }}
+            onMouseEnter={() => setHoveredItem(item.label)}
+            onMouseLeave={() => setHoveredItem(null)}
             style={{ cursor: "pointer" }}
           >
+            {/* Hover background */}
             <rect
-              x="2"
-              y="0"
-              width={MENU_W - 4}
+              x="3"
+              y="1"
+              width={MENU_W - 6}
               height={ITEM_H - 2}
-              rx="2"
-              fill="transparent"
-              className="context-menu-item"
+              rx="3"
+              fill={hoveredItem === item.label ? "rgba(59, 130, 246, 0.15)" : "transparent"}
+              stroke={hoveredItem === item.label ? "rgba(59, 130, 246, 0.3)" : "transparent"}
+              strokeWidth="0.5"
+              style={{
+                transition: "all 0.2s cubic-bezier(0.4, 0, 0.2, 1)",
+              }}
             />
-            <circle cx="12" cy={ITEM_H / 2 - 1} r="2.5" fill={item.color ?? "#64748b"} opacity="0.7" />
+
+            {/* Ícone indicador */}
+            <circle
+              cx="12"
+              cy={ITEM_H / 2}
+              r="3"
+              fill={item.color ?? "#64748b"}
+              opacity={hoveredItem === item.label ? 1 : 0.7}
+              style={{
+                transition: "all 0.2s cubic-bezier(0.4, 0, 0.2, 1)",
+                filter: hoveredItem === item.label ? "url(#menu-glow)" : undefined,
+              }}
+            />
+
+            {/* Texto do item */}
             <text
-              x="20"
-              y={ITEM_H / 2 + 2}
-              fontSize="7"
-              fill="#e2e8f0"
-              fontFamily="monospace"
+              x="22"
+              y={ITEM_H / 2 + 3}
+              fontSize="8"
+              fill={hoveredItem === item.label ? "#f1f5f9" : "#e2e8f0"}
+              fontFamily="'JetBrains Mono', monospace"
+              fontWeight={hoveredItem === item.label ? 600 : 500}
+              style={{
+                transition: "all 0.2s cubic-bezier(0.4, 0, 0.2, 1)",
+              }}
             >
               {item.label}
             </text>

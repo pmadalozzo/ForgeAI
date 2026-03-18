@@ -115,3 +115,53 @@ export async function loadAllTasks(projectId: string): Promise<TaskRow[]> {
   }
   return (data ?? []) as TaskRow[];
 }
+
+/** Calcula progresso do projeto baseado nas tasks e atualiza na tabela projects */
+export async function syncProjectProgress(projectId: string): Promise<number> {
+  const supabase = getSupabaseClient();
+  if (!supabase) return 0;
+
+  const { data, error } = await supabase
+    .from("tasks")
+    .select("status")
+    .eq("project_id", projectId);
+
+  if (error || !data || data.length === 0) return 0;
+
+  const total = data.length;
+  const doneCount = data.filter((t) => t.status === "done").length;
+  const reviewCount = data.filter((t) => t.status === "review").length;
+  const inProgressCount = data.filter((t) => t.status === "in_progress").length;
+
+  // done=100%, review=80%, in_progress=40%, pending/blocked=0%
+  const weightedProgress = Math.round(
+    ((doneCount * 100 + reviewCount * 80 + inProgressCount * 40) / (total * 100)) * 100,
+  );
+
+  // Atualiza na tabela projects
+  await supabase
+    .from("projects")
+    .update({ progress: weightedProgress })
+    .eq("id", projectId);
+
+  return weightedProgress;
+}
+
+/** Carrega o progresso salvo do projeto — usa mesma fórmula ponderada que syncProjectProgress */
+export async function getProjectProgress(projectId: string): Promise<{ progress: number; completedTasks: string[] }> {
+  const tasks = await loadAllTasks(projectId);
+  if (tasks.length === 0) return { progress: 0, completedTasks: [] };
+
+  const completed = tasks.filter((t) => t.status === "done").map((t) => t.title);
+  const total = tasks.length;
+  const doneCount = completed.length;
+  const reviewCount = tasks.filter((t) => t.status === "review").length;
+  const inProgressCount = tasks.filter((t) => t.status === "in_progress").length;
+
+  // Mesma fórmula ponderada de syncProjectProgress
+  const progress = Math.round(
+    ((doneCount * 100 + reviewCount * 80 + inProgressCount * 40) / (total * 100)) * 100,
+  );
+
+  return { progress, completedTasks: completed };
+}

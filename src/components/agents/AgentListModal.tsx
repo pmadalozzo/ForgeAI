@@ -3,6 +3,7 @@
  * a criação de novos agentes e configuração individual.
  */
 import { useState, useCallback, useRef } from "react";
+import { motion, AnimatePresence } from "framer-motion";
 import { useAgentsStore } from "@/stores/agents-store";
 import { AgentStatus } from "@/types/agents";
 import { PROVIDER_DISPLAY_NAMES } from "@/stores/settings-store";
@@ -70,215 +71,318 @@ export function AgentListModal({ isOpen, onClose }: AgentListModalProps) {
   }
 
   return (
-    <div
-      style={{
-        position: "fixed",
-        inset: 0,
-        zIndex: 10000,
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        backdropFilter: "blur(4px)",
-        background: "rgba(0, 0, 0, 0.6)",
-      }}
-      onMouseDown={(e) => { mouseDownTarget.current = e.target; }}
-      onClick={(e) => { if (e.target === e.currentTarget && mouseDownTarget.current === e.currentTarget) onClose(); }}
-    >
-      <div
+    <AnimatePresence>
+      <motion.div
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        exit={{ opacity: 0 }}
+        transition={{ duration: 0.2 }}
         style={{
-          width: 800,
-          height: 600,
-          background: "#0c1322",
-          border: "1px solid #1e293b",
-          borderRadius: 16,
+          position: "fixed",
+          inset: 0,
+          zIndex: 10000,
           display: "flex",
-          flexDirection: "column",
-          fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
-          boxShadow: "0 25px 60px rgba(0,0,0,0.5), 0 0 30px rgba(59,130,246,0.08)",
-          overflow: "hidden",
+          alignItems: "center",
+          justifyContent: "center",
+          backdropFilter: "blur(12px) saturate(180%)",
+          background: "rgba(0, 0, 0, 0.65)",
         }}
+        onMouseDown={(e) => { mouseDownTarget.current = e.target; }}
+        onClick={(e) => { if (e.target === e.currentTarget && mouseDownTarget.current === e.currentTarget) onClose(); }}
       >
-        {/* Header */}
-        <div
+        <motion.div
+          initial={{ scale: 0.8, opacity: 0, y: 20 }}
+          animate={{ scale: 1, opacity: 1, y: 0 }}
+          exit={{ scale: 0.8, opacity: 0, y: 20 }}
+          transition={{ type: "spring", duration: 0.4, bounce: 0.3 }}
           style={{
-            padding: "16px 24px",
-            borderBottom: "1px solid #1e293b",
+            width: 800,
+            height: 600,
+            background: "rgba(12, 19, 34, 0.85)",
+            backdropFilter: "blur(20px) saturate(180%)",
+            border: "1px solid rgba(30, 41, 59, 0.8)",
+            borderRadius: 20,
+            display: "flex",
+            flexDirection: "column",
+            fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
+            boxShadow: `
+              0 32px 80px rgba(0, 0, 0, 0.6),
+              0 0 40px rgba(59, 130, 246, 0.12),
+              inset 0 1px 0 rgba(255, 255, 255, 0.1)
+            `,
+            overflow: "hidden",
+          }}
+        >
+        {/* Header */}
+        <motion.div
+          initial={{ opacity: 0, y: -10 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.1, duration: 0.3 }}
+          style={{
+            padding: "20px 28px",
+            borderBottom: "1px solid rgba(30, 41, 59, 0.6)",
             display: "flex",
             justifyContent: "space-between",
             alignItems: "center",
             flexShrink: 0,
+            background: "linear-gradient(135deg, rgba(59, 130, 246, 0.05), rgba(139, 92, 246, 0.02))",
           }}
         >
-          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-            <span style={{ fontSize: 20 }}>🏢</span>
-            <span style={{ fontSize: 16, fontWeight: 700, color: "#e2e8f0" }}>
-              Agentes do Escritório
-            </span>
-            <span
-              style={{
-                fontSize: 11,
-                color: "#64748b",
-                background: "#1e293b",
-                padding: "2px 8px",
-                borderRadius: 4,
-                fontWeight: 600,
-              }}
+          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+            <motion.span
+              initial={{ scale: 0.8 }}
+              animate={{ scale: 1 }}
+              transition={{ delay: 0.2, duration: 0.3, type: "spring" }}
+              style={{ fontSize: 24 }}
             >
-              {agents.length} agentes
-            </span>
+              🏢
+            </motion.span>
+            <div>
+              <h2 style={{
+                fontSize: 18,
+                fontWeight: 700,
+                color: "#e2e8f0",
+                margin: 0,
+                textShadow: "0 2px 8px rgba(0, 0, 0, 0.3)"
+              }}>
+                Agentes do Escritório
+              </h2>
+              <div
+                style={{
+                  fontSize: 12,
+                  color: "#64748b",
+                  background: "rgba(30, 41, 59, 0.6)",
+                  backdropFilter: "blur(8px)",
+                  padding: "3px 10px",
+                  borderRadius: 12,
+                  fontWeight: 600,
+                  border: "1px solid rgba(51, 65, 85, 0.4)",
+                  marginTop: 4,
+                  display: "inline-block"
+                }}
+              >
+                {agents.length} agentes ativos
+              </div>
+            </div>
           </div>
-          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <button
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <motion.button
               type="button"
               onClick={handleOpenCreate}
+              whileHover={{ scale: 1.05, boxShadow: "0 8px 25px rgba(59, 130, 246, 0.4)" }}
+              whileTap={{ scale: 0.95 }}
               style={{
-                padding: "6px 14px",
+                padding: "8px 16px",
                 background: "linear-gradient(135deg, #3B82F6, #8B5CF6)",
-                border: "none",
-                borderRadius: 8,
+                border: "1px solid rgba(59, 130, 246, 0.3)",
+                borderRadius: 10,
                 color: "#fff",
-                fontSize: 12,
+                fontSize: 13,
                 fontWeight: 700,
                 cursor: "pointer",
                 fontFamily: "inherit",
                 display: "flex",
                 alignItems: "center",
-                gap: 6,
+                gap: 8,
+                boxShadow: "0 4px 15px rgba(59, 130, 246, 0.2)",
+                position: "relative",
+                overflow: "hidden"
               }}
             >
-              <span style={{ fontSize: 14, lineHeight: 1 }}>+</span>
+              <span style={{ fontSize: 16, lineHeight: 1 }}>+</span>
               Criar Novo Agente
-            </button>
-            <button
+            </motion.button>
+            <motion.button
               type="button"
               onClick={onClose}
+              whileHover={{ scale: 1.1, color: "#ef4444" }}
+              whileTap={{ scale: 0.9 }}
               style={{
-                background: "none",
-                border: "none",
-                color: "#475569",
+                background: "rgba(71, 85, 105, 0.2)",
+                border: "1px solid rgba(71, 85, 105, 0.3)",
+                borderRadius: 8,
+                color: "#94a3b8",
                 fontSize: 18,
                 cursor: "pointer",
                 fontFamily: "inherit",
-                padding: "4px 8px",
+                padding: "6px 10px",
+                transition: "all 0.2s ease"
               }}
             >
               ✕
-            </button>
+            </motion.button>
           </div>
-        </div>
+        </motion.div>
 
         {/* Agent grid */}
-        <div
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={{ delay: 0.2, duration: 0.4 }}
           style={{
             flex: 1,
             overflow: "auto",
-            padding: "16px 24px",
+            padding: "20px 28px",
             display: "grid",
             gridTemplateColumns: "repeat(2, 1fr)",
-            gap: 12,
+            gap: 16,
             alignContent: "start",
           }}
         >
-          {agents.map((agent) => {
+          {agents.map((agent, index) => {
             const statusCfg = STATUS_CONFIG[agent.status];
             return (
-              <button
+              <motion.button
                 key={agent.id}
                 type="button"
                 onClick={() => handleOpenConfig(agent.id)}
+                initial={{ opacity: 0, y: 20, scale: 0.9 }}
+                animate={{ opacity: 1, y: 0, scale: 1 }}
+                transition={{
+                  delay: 0.1 + (index * 0.05),
+                  duration: 0.3,
+                  type: "spring",
+                  damping: 25
+                }}
+                whileHover={{
+                  scale: 1.03,
+                  y: -2,
+                  boxShadow: `0 20px 40px rgba(0, 0, 0, 0.4), 0 0 30px ${agent.color}30`
+                }}
+                whileTap={{ scale: 0.98 }}
                 style={{
                   display: "flex",
                   alignItems: "center",
-                  gap: 14,
-                  padding: "14px 16px",
-                  background: "#1e293b",
-                  border: "1px solid #334155",
-                  borderRadius: 12,
+                  gap: 16,
+                  padding: "18px 20px",
+                  background: "rgba(30, 41, 59, 0.6)",
+                  backdropFilter: "blur(16px) saturate(180%)",
+                  border: `1px solid rgba(51, 65, 85, 0.6)`,
+                  borderRadius: 16,
                   cursor: "pointer",
                   fontFamily: "inherit",
                   textAlign: "left",
-                  transition: "border-color 0.2s, background 0.2s",
+                  transition: "all 0.3s cubic-bezier(0.4, 0, 0.2, 1)",
+                  position: "relative",
+                  overflow: "hidden",
+                  boxShadow: `
+                    0 8px 32px rgba(0, 0, 0, 0.2),
+                    0 0 15px rgba(${agent.color.slice(1)}, 0.08),
+                    inset 0 1px 0 rgba(255, 255, 255, 0.1)
+                  `
                 }}
-                onMouseEnter={(e) => {
-                  e.currentTarget.style.borderColor = agent.color;
-                  e.currentTarget.style.background = "#263354";
-                }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.borderColor = "#334155";
-                  e.currentTarget.style.background = "#1e293b";
+                onHoverStart={() => {
+                  // Efeito adicional via estilo direto se necessário
                 }}
               >
-                {/* Emoji + cor indicator */}
+                {/* Glassmorphism overlay */}
                 <div
                   style={{
-                    width: 44,
-                    height: 44,
-                    borderRadius: 10,
-                    background: `${agent.color}18`,
+                    position: "absolute",
+                    inset: 0,
+                    background: `linear-gradient(135deg, ${agent.color}08, transparent)`,
+                    opacity: 0,
+                    transition: "opacity 0.3s ease"
+                  }}
+                  className="glass-overlay"
+                />
+
+                {/* Emoji + cor indicator */}
+                <motion.div
+                  whileHover={{ scale: 1.1, rotate: 5 }}
+                  style={{
+                    width: 48,
+                    height: 48,
+                    borderRadius: 12,
+                    background: `linear-gradient(135deg, ${agent.color}20, ${agent.color}10)`,
                     border: `1px solid ${agent.color}40`,
                     display: "flex",
                     alignItems: "center",
                     justifyContent: "center",
-                    fontSize: 22,
+                    fontSize: 24,
                     flexShrink: 0,
+                    boxShadow: `0 4px 20px ${agent.color}25`,
+                    position: "relative",
+                    zIndex: 2
                   }}
                 >
                   {agent.emoji}
-                </div>
+                </motion.div>
 
                 {/* Info */}
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <div style={{ flex: 1, minWidth: 0, position: "relative", zIndex: 2 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6 }}>
                     <span
                       style={{
-                        fontSize: 13,
+                        fontSize: 14,
                         fontWeight: 700,
-                        color: agent.color,
+                        color: "#e2e8f0",
                         overflow: "hidden",
                         textOverflow: "ellipsis",
                         whiteSpace: "nowrap",
+                        textShadow: "0 1px 3px rgba(0, 0, 0, 0.3)"
                       }}
                     >
                       {agent.name}
                     </span>
-                    <span
+                    <motion.span
+                      initial={{ scale: 0.8 }}
+                      animate={{ scale: 1 }}
                       style={{
                         fontSize: 10,
                         color: statusCfg.color,
-                        background: `${statusCfg.color}18`,
-                        padding: "1px 6px",
-                        borderRadius: 4,
+                        background: `${statusCfg.color}20`,
+                        backdropFilter: "blur(8px)",
+                        padding: "3px 8px",
+                        borderRadius: 8,
                         fontWeight: 600,
                         flexShrink: 0,
+                        border: `1px solid ${statusCfg.color}30`,
+                        boxShadow: `0 2px 8px ${statusCfg.color}20`
                       }}
                     >
                       {statusCfg.icon} {statusCfg.label}
-                    </span>
+                    </motion.span>
                   </div>
                   <div
                     style={{
                       display: "flex",
                       alignItems: "center",
-                      gap: 8,
-                      marginTop: 4,
+                      gap: 10,
+                      marginBottom: agent.currentTask ? 6 : 0,
                     }}
                   >
-                    <span style={{ fontSize: 10, color: "#64748b" }}>
+                    <span style={{
+                      fontSize: 11,
+                      color: "#94a3b8",
+                      background: "rgba(71, 85, 105, 0.3)",
+                      padding: "2px 6px",
+                      borderRadius: 6,
+                      fontWeight: 500
+                    }}>
                       {agent.role}
                     </span>
-                    <span style={{ fontSize: 10, color: "#475569" }}>
+                    <span style={{
+                      fontSize: 11,
+                      color: "#64748b",
+                      background: "rgba(51, 65, 85, 0.3)",
+                      padding: "2px 6px",
+                      borderRadius: 6,
+                      fontWeight: 500
+                    }}>
                       {PROVIDER_DISPLAY_NAMES[agent.provider]}
                     </span>
                   </div>
                   {agent.currentTask && (
                     <div
                       style={{
-                        fontSize: 10,
-                        color: "#94a3b8",
-                        marginTop: 4,
+                        fontSize: 11,
+                        color: "#cbd5e1",
                         overflow: "hidden",
                         textOverflow: "ellipsis",
                         whiteSpace: "nowrap",
+                        fontWeight: 500,
+                        opacity: 0.8
                       }}
                     >
                       {agent.currentTask}
@@ -286,55 +390,86 @@ export function AgentListModal({ isOpen, onClose }: AgentListModalProps) {
                   )}
                 </div>
 
-                {/* Cor dot */}
-                <div
+                {/* Status indicator */}
+                <motion.div
+                  animate={{
+                    scale: [1, 1.2, 1],
+                    opacity: [0.6, 1, 0.6]
+                  }}
+                  transition={{
+                    duration: 2,
+                    repeat: Infinity,
+                    ease: "easeInOut"
+                  }}
                   style={{
-                    width: 8,
-                    height: 8,
+                    width: 10,
+                    height: 10,
                     borderRadius: "50%",
-                    background: agent.color,
+                    background: `linear-gradient(135deg, ${agent.color}, ${agent.color}cc)`,
                     flexShrink: 0,
-                    opacity: 0.6,
+                    boxShadow: `0 0 15px ${agent.color}60`,
+                    position: "relative",
+                    zIndex: 2
                   }}
                 />
-              </button>
+              </motion.button>
             );
           })}
-        </div>
+        </motion.div>
 
         {/* Footer */}
-        <div
+        <motion.div
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.3, duration: 0.3 }}
           style={{
-            padding: "12px 24px",
-            borderTop: "1px solid #1e293b",
+            padding: "16px 28px",
+            borderTop: "1px solid rgba(30, 41, 59, 0.6)",
             display: "flex",
             justifyContent: "space-between",
             alignItems: "center",
             flexShrink: 0,
+            background: "linear-gradient(135deg, rgba(30, 41, 59, 0.3), rgba(51, 65, 85, 0.2))",
+            backdropFilter: "blur(8px)",
           }}
         >
-          <span style={{ fontSize: 11, color: "#475569" }}>
+          <span style={{
+            fontSize: 12,
+            color: "#94a3b8",
+            fontWeight: 500,
+            opacity: 0.8
+          }}>
             Clique em um agente para configurar
           </span>
-          <button
+          <motion.button
             type="button"
             onClick={onClose}
+            whileHover={{
+              scale: 1.05,
+              backgroundColor: "rgba(30, 41, 59, 0.8)",
+              borderColor: "rgba(59, 130, 246, 0.4)"
+            }}
+            whileTap={{ scale: 0.95 }}
             style={{
-              padding: "8px 16px",
-              background: "#1e293b",
-              border: "1px solid #334155",
-              borderRadius: 8,
-              color: "#94a3b8",
-              fontSize: 12,
+              padding: "10px 18px",
+              background: "rgba(30, 41, 59, 0.6)",
+              backdropFilter: "blur(8px)",
+              border: "1px solid rgba(51, 65, 85, 0.6)",
+              borderRadius: 10,
+              color: "#cbd5e1",
+              fontSize: 13,
               fontWeight: 600,
               cursor: "pointer",
               fontFamily: "inherit",
+              transition: "all 0.2s ease",
+              boxShadow: "0 2px 10px rgba(0, 0, 0, 0.2)"
             }}
           >
             Fechar
-          </button>
-        </div>
-      </div>
-    </div>
+          </motion.button>
+        </motion.div>
+      </motion.div>
+    </motion.div>
+    </AnimatePresence>
   );
 }

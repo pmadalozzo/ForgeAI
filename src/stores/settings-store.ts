@@ -117,7 +117,7 @@ export const MODELS_BY_PROVIDER: Record<LLMProvider, string[]> = {
   "claude-code": [
     "claude-opus-4-20250514",
     "claude-sonnet-4-20250514",
-    "claude-haiku-4-5-20241022",
+    "claude-haiku-4-5-20251001",
   ],
   openai: [
     "gpt-4o",

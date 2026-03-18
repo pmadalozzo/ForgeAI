@@ -193,10 +193,12 @@ export function ChatPanel() {
   // Chat store
   const messages = useChatStore((s) => s.messages);
   const isLoading = useChatStore((s) => s.isLoading);
-  const addMessage = useChatStore((s) => s.addMessage);
-  const updateMessage = useChatStore((s) => s.updateMessage);
+  const addMessageRaw = useChatStore((s) => s.addMessage);
+  const updateMessageRaw = useChatStore((s) => s.updateMessage);
   const setStreaming = useChatStore((s) => s.setStreaming);
   const setLoading = useChatStore((s) => s.setLoading);
+  const persistMessage = useChatStore((s) => s.persistMessage);
+  const persistUpdate = useChatStore((s) => s.persistUpdate);
 
   // Settings store
   const agentDefaults = useSettingsStore((s) => s.agentDefaults);
@@ -204,6 +206,36 @@ export function ChatPanel() {
 
   // Project store
   const project = useProjectStore((s) => s.getProject());
+
+  // Wrappers que adicionam e persistem mensagens no Supabase
+  const addMessage = useCallback((from: string, content: string) => {
+    const id = addMessageRaw(from, content);
+    const pid = project?.id;
+    if (pid) {
+      persistMessage(pid, id, from, content);
+    }
+    return id;
+  }, [addMessageRaw, persistMessage, project]);
+
+  // updateMessage NÃO persiste a cada chunk — só atualiza em memória.
+  // A persistência final acontece quando setStreaming(id, false) é chamado.
+  const updateMessage = updateMessageRaw;
+
+  // Wrapper de setStreaming que persiste a mensagem final quando streaming termina
+  const setStreamingRaw = setStreaming;
+  const setStreamingWithPersist = useCallback((id: string, streaming: boolean) => {
+    setStreamingRaw(id, streaming);
+    // Quando streaming termina, persiste o conteúdo final
+    if (!streaming) {
+      const pid = project?.id;
+      if (pid) {
+        const msg = useChatStore.getState().messages.find((m) => m.id === id);
+        if (msg && msg.content.length > 0) {
+          persistUpdate(pid, id, msg.from, msg.content);
+        }
+      }
+    }
+  }, [setStreamingRaw, persistUpdate, project]);
 
   // Orchestrator hook — distribui tarefas para agentes
   const { processMessage: orchestratorProcess } = useOrchestrator();
@@ -231,34 +263,47 @@ export function ChatPanel() {
     let prompt = `Voce e o Orquestrador do ForgeAI, uma fabrica de software autonoma.
 Seu papel e APENAS PLANEJAR e COORDENAR. Voce NAO cria arquivos, NAO escreve codigo, NAO executa comandos.
 
-## Seu Unico Trabalho
-Receber a descricao do projeto e responder com um PLANO CONCISO em formato de lista:
-- Liste 4-6 tarefas na ordem de execucao
-- Cada tarefa com: titulo, agente responsavel (architect/frontend/backend/database/qa), e descricao curta
-- NUNCA tente criar arquivos ou executar codigo voce mesmo
+## REGRA ABSOLUTA
+Voce SEMPRE responde com um PLANO DE TAREFAS em formato de lista numerada. NUNCA responda com perguntas, status, ou explicacoes. Se o pedido for ambiguo, INTERPRETE e crie o plano — NAO pergunte "o que voce precisa?".
 
-## Formato de Resposta
-Responda APENAS com o plano, sem explicacoes longas. Exemplo:
+## Formato OBRIGATORIO (siga EXATAMENTE)
+1. **Titulo da tarefa** (role) — Descricao curta do que fazer
 
-1. **Setup do projeto** (architect) — Criar package.json, tsconfig, vite.config, tailwind.config
-2. **Tipos e interfaces** (architect) — Definir interfaces TypeScript para as entidades
-3. **Dados mock e services** (backend) — Criar services com dados mock em memoria
-4. **Componentes React** (frontend) — Criar paginas e componentes da interface
-5. **Integracao** (frontend) — Conectar componentes aos services
+Roles validas entre parenteses: pm, architect, frontend, backend, database, qa, security, devops, reviewer, designer
+
+## Tipos de Mensagem do Usuario
+1. **Novo projeto**: "Crie um site de pets" → plano completo do zero (PM, Architect, Frontend...)
+2. **Melhoria/feedback**: "Melhore o Hero", "Melhore os cards", "Não gostei do layout" → plano com 1-3 tarefas focadas (geralmente designer + frontend)
+3. **Continuação**: "[CONTINUAR PROJETO]" → verifique o que falta e planeje apenas as pendências
+
+Para melhorias de UI/UX, inclua o **designer** para revisar e o **frontend** para implementar.
+Para melhorias, NÃO repita o projeto inteiro. Crie apenas 1-3 tarefas focadas na mudança pedida.
+
+## IMPORTANTE: Continuidade do Projeto
+- SEMPRE analise primeiro o que ja existe no projeto antes de planejar
+- Se o projeto ja tem arquivos/codigo, planeje APENAS o que falta, nao refaca o que ja esta pronto
+- NUNCA repita tarefas que ja foram concluidas (cheque o historico)
+
+## Exemplo de resposta para MELHORIA:
+1. **Revisar UI/UX dos cards** (designer) — Analisar layout, espacamento, hierarquia visual e propor melhorias nos cards existentes
+2. **Implementar melhorias nos cards** (frontend) — Aplicar as melhorias de design: sombras, hover effects, tipografia, responsividade
+
+## Exemplo de resposta para NOVO PROJETO:
+1. **Criar PRD** (pm) — Definir requisitos, user stories e criterios de aceitacao
+2. **Setup do projeto** (architect) — Criar package.json, tsconfig, vite.config, tailwind.config
+3. **Componentes React** (frontend) — Criar paginas e componentes da interface
 
 ## Regras
 - Maximo 6 tarefas para MVP
-- Ordem sequencial (cada tarefa depende da anterior)
 - Stack padrao: React 18 + TypeScript + Vite + Tailwind
-- Imports relativos (sem aliases)
 - Responda em portugues brasileiro
-- Seja CONCISO — maximo 15 linhas de resposta`;
+- Seja CONCISO — maximo 15 linhas
+- NUNCA responda com status do projeto ou perguntas. SEMPRE responda com o plano.
+- **RESPEITE** preferencias do usuario: se pediu "sem backend", NAO crie tarefas para backend.`;
 
     if (project) {
       prompt += `\n\n## Contexto do Projeto Atual\n- Nome: ${project.name}\n- Descricao: ${project.description}`;
-      if (project.localPath) {
-        prompt += `\n- Pasta local: ${project.localPath}`;
-      }
+      // NÃO inclui localPath — o orchestrator roda sem CWD e tentaria acessar a pasta sem permissão
       if (project.gitUrl) {
         prompt += `\n- Repositorio Git: ${project.gitUrl}`;
       }
@@ -283,6 +328,20 @@ Responda APENAS com o plano, sem explicacoes longas. Exemplo:
         .map((m) => `- [${m.category}] ${m.title}: ${m.content}`)
         .join("\n");
       prompt += `\n\n## Preferencias do Usuario\n${devLines}`;
+    }
+
+    // Injeta resumo das últimas interações do chat para continuidade
+    const recentMsgs = useChatStore.getState().messages;
+    const agentMsgs = recentMsgs.filter(
+      (m) => m.from !== "user" && m.content.length > 50 && !m.content.startsWith("[Erro"),
+    ).slice(-3);
+
+    if (agentMsgs.length > 0) {
+      const summaryLines = agentMsgs.map((m) => {
+        const preview = m.content.length > 150 ? m.content.slice(0, 150) + "..." : m.content;
+        return `- [${m.from}]: ${preview}`;
+      }).join("\n");
+      prompt += `\n\n## Ultimas Respostas dos Agentes (para contexto de continuidade)\n${summaryLines}`;
     }
 
     return prompt;
@@ -336,12 +395,23 @@ Responda APENAS com o plano, sem explicacoes longas. Exemplo:
     setLoading(false);
   }, [setAgentStatus, setAgentTask, addMessage, setLoading]);
 
+  // Queue store
+  const enqueueMessage = useChatStore((s) => s.enqueueMessage);
+  const dequeueMessage = useChatStore((s) => s.dequeueMessage);
+
   /** Envia mensagem e recebe resposta via streaming */
   const handleSend = useCallback(async (injectedText?: string) => {
     const text = (injectedText ?? chatInput).trim();
-    if (!text || isLoading) return;
+    if (!text) return;
 
     if (!injectedText) setChatInput("");
+
+    // Se já está processando, enfileira a mensagem para depois
+    if (isLoading) {
+      addMessage("user", text);
+      enqueueMessage(text);
+      return;
+    }
 
     // Add user message
     addMessage("user", text);
@@ -396,7 +466,7 @@ Responda APENAS com o plano, sem explicacoes longas. Exemplo:
 
       // Create a placeholder message for the streaming response
       const responseId = addMessage("orchestrator", "");
-      setStreaming(responseId, true);
+      setStreamingWithPersist(responseId, true);
       updateMessage(responseId, "Aguardando resposta do Claude Code CLI...");
 
       let accumulatedContent = "";
@@ -421,7 +491,12 @@ Responda APENAS com o plano, sem explicacoes longas. Exemplo:
         const stream = llmGateway.stream(request);
         for await (const chunk of stream) {
           if (chunk.content) {
-            accumulatedContent += chunk.content;
+            if (chunk.replace) {
+              // Provider pede substituição total (ex: Claude CLI que não faz streaming real)
+              accumulatedContent = chunk.content;
+            } else {
+              accumulatedContent += chunk.content;
+            }
             updateMessage(responseId, accumulatedContent);
           }
           if (chunk.done) {
@@ -443,7 +518,7 @@ Responda APENAS com o plano, sem explicacoes longas. Exemplo:
           );
         }
       } finally {
-        setStreaming(responseId, false);
+        setStreamingWithPersist(responseId, false);
 
         // Salvar resposta do orquestrador como memória do projeto
         // Não salvar se o conteúdo é uma mensagem de erro
@@ -498,7 +573,7 @@ Responda APENAS com o plano, sem explicacoes longas. Exemplo:
     isLoading,
     addMessage,
     updateMessage,
-    setStreaming,
+    setStreamingWithPersist,
     setLoading,
     setAgentStatus,
     setAgentTask,
@@ -508,7 +583,20 @@ Responda APENAS com o plano, sem explicacoes longas. Exemplo:
     orchestratorProcess,
     project,
     addProjectMemory,
+    enqueueMessage,
   ]);
+
+  /** Processa mensagens da fila quando o loading termina */
+  const handleSendRef2 = useRef(handleSend);
+  handleSendRef2.current = handleSend;
+  useEffect(() => {
+    if (!isLoading) {
+      const next = dequeueMessage();
+      if (next) {
+        void handleSendRef2.current(next);
+      }
+    }
+  }, [isLoading, dequeueMessage]);
 
   /** Consome mensagens pendentes injetadas (ex: ao iniciar projeto) */
   const pendingMessage = useChatStore((s) => s.pendingMessage);
@@ -607,9 +695,22 @@ Responda APENAS com o plano, sem explicacoes longas. Exemplo:
           </div>
         )}
 
-        {messages.map((m) => {
+        {messages.map((m, idx) => {
           const isUser = m.from === "user";
           const agent = !isUser ? agentLookup[m.from] : undefined;
+
+          // Agrupa: oculta label se a mensagem anterior (qualquer posição recente) é do mesmo sender
+          const prevMsg = idx > 0 ? messages[idx - 1] : undefined;
+          const isSameSender = prevMsg !== undefined && prevMsg.from === m.from;
+          // Também oculta se a mensagem anterior é do orchestrator com msg curta de sistema (ex: "Iniciando Fase...")
+          const isPrevSystemMsg = prevMsg !== undefined &&
+            prevMsg.from === "orchestrator" &&
+            prevMsg.content.length < 120 &&
+            (prevMsg.content.includes("Fase") || prevMsg.content.includes("Decompus") || prevMsg.content.includes("Analisando"));
+          const prevPrevMsg = idx > 1 ? messages[idx - 2] : undefined;
+          const isGroupedAfterSystem = isPrevSystemMsg && prevPrevMsg !== undefined && prevPrevMsg.from === m.from;
+
+          const hideLabel = isSameSender || isGroupedAfterSystem;
 
           return (
             <div
@@ -618,9 +719,11 @@ Responda APENAS com o plano, sem explicacoes longas. Exemplo:
                 display: "flex",
                 flexDirection: "column",
                 alignItems: isUser ? "flex-end" : "flex-start",
+                marginTop: isSameSender ? -4 : 0,
               }}
             >
-              {/* Sender label + timestamp */}
+              {/* Sender label + timestamp — oculta se agrupado */}
+              {!hideLabel && (
               <div
                 style={{
                   fontSize: 12,
@@ -640,6 +743,7 @@ Responda APENAS com o plano, sem explicacoes longas. Exemplo:
                 </span>
                 <span style={{ color: "#334155", fontSize: 11 }}>{formatTime(m.timestamp)}</span>
               </div>
+              )}
               {/* Bubble */}
               <div
                 style={{
@@ -734,23 +838,38 @@ Responda APENAS com o plano, sem explicacoes longas. Exemplo:
           value={chatInput}
           onChange={(e) => setChatInput(e.target.value)}
           onKeyDown={handleKeyDown}
-          placeholder="Fale com o Orchestrator..."
-          disabled={isLoading}
+          placeholder={isLoading ? "Envie instrução adicional..." : "Fale com o Orchestrator..."}
           autoComplete="off"
           style={{
             flex: 1,
             background: "#1e293b",
-            border: "1px solid #334155",
+            border: `1px solid ${isLoading ? "#3B82F6" : "#334155"}`,
             borderRadius: 8,
             padding: "7px 10px",
             color: "#e2e8f0",
             fontSize: 14,
             fontFamily: "inherit",
             outline: "none",
-            opacity: isLoading ? 0.6 : 1,
           }}
         />
-        {isLoading ? (
+        <button
+          onClick={() => void handleSend()}
+          type="button"
+          style={{
+            background: "linear-gradient(135deg, #3B82F6, #8B5CF6)",
+            border: "none",
+            borderRadius: 8,
+            padding: "7px 14px",
+            color: "#fff",
+            fontSize: 15,
+            cursor: "pointer",
+            fontFamily: "inherit",
+            fontWeight: 700,
+          }}
+        >
+          ↵
+        </button>
+        {isLoading && (
           <button
             onClick={() => void handleStop()}
             type="button"
@@ -758,7 +877,7 @@ Responda APENAS com o plano, sem explicacoes longas. Exemplo:
               background: "linear-gradient(135deg, #EF4444, #DC2626)",
               border: "none",
               borderRadius: 8,
-              padding: "7px 14px",
+              padding: "7px 10px",
               color: "#fff",
               fontSize: 12,
               cursor: "pointer",
@@ -767,25 +886,7 @@ Responda APENAS com o plano, sem explicacoes longas. Exemplo:
               whiteSpace: "nowrap",
             }}
           >
-            Parar
-          </button>
-        ) : (
-          <button
-            onClick={() => void handleSend()}
-            type="button"
-            style={{
-              background: "linear-gradient(135deg, #3B82F6, #8B5CF6)",
-              border: "none",
-              borderRadius: 8,
-              padding: "7px 14px",
-              color: "#fff",
-              fontSize: 15,
-              cursor: "pointer",
-              fontFamily: "inherit",
-              fontWeight: 700,
-            }}
-          >
-            ↵
+            ■
           </button>
         )}
       </div>

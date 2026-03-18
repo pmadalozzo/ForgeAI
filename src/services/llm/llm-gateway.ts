@@ -72,6 +72,12 @@ export interface LLMStreamChunk {
   done: boolean;
   /** Tokens acumulados até o momento (se disponível) */
   accumulatedTokens: number | null;
+  /** Se true, substitui todo o conteúdo acumulado em vez de concatenar */
+  replace?: boolean;
+  /** Tokens de input (enviado no último chunk para tracking) */
+  inputTokens?: number;
+  /** Custo em USD (enviado no último chunk para tracking) */
+  costUsd?: number;
 }
 
 /** Rastreamento de uso de tokens */
@@ -170,7 +176,8 @@ export class LLMGateway {
    */
   async send(request: LLMRequest): Promise<LLMResponse> {
     const provider = this.resolveProvider(request.agentId);
-    const model = this.agentModelMap.get(request.agentId) ?? request.model;
+    const mapped = this.agentModelMap.get(request.agentId);
+    const model = (mapped && mapped.length > 0) ? mapped : (request.model || "");
 
     const adjustedRequest: LLMRequest = { ...request, model };
     const response = await provider.send(adjustedRequest);
@@ -185,11 +192,37 @@ export class LLMGateway {
    */
   async *stream(request: LLMRequest): AsyncGenerator<LLMStreamChunk, void, unknown> {
     const provider = this.resolveProvider(request.agentId);
-    const model = this.agentModelMap.get(request.agentId) ?? request.model;
+    const mapped = this.agentModelMap.get(request.agentId);
+    const model = (mapped && mapped.length > 0) ? mapped : (request.model || "");
 
     const adjustedRequest: LLMRequest = { ...request, model };
 
-    yield* provider.stream(adjustedRequest);
+    // Rastreia tokens do stream para contabilizar uso total
+    let lastOutputTokens = 0;
+    let lastInputTokens = 0;
+    let lastCostUsd = 0;
+    for await (const chunk of provider.stream(adjustedRequest)) {
+      if (chunk.accumulatedTokens != null && chunk.accumulatedTokens > 0) {
+        lastOutputTokens = chunk.accumulatedTokens;
+      }
+      if (chunk.inputTokens != null) lastInputTokens = chunk.inputTokens;
+      if (chunk.costUsd != null) lastCostUsd = chunk.costUsd;
+      yield chunk;
+    }
+
+    // Após stream completo, registra uso
+    if (lastOutputTokens > 0 || lastInputTokens > 0) {
+      this.trackUsage(request.agentId, {
+        content: "",
+        model: adjustedRequest.model,
+        provider: provider.providerType,
+        inputTokens: lastInputTokens,
+        outputTokens: lastOutputTokens,
+        costUsd: lastCostUsd,
+        durationMs: 0,
+        finishReason: "stop",
+      });
+    }
   }
 
   /**

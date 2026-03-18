@@ -23,7 +23,7 @@ import { useAgentsStore } from "../../stores/agents-store";
 import { useSettingsStore } from "../../stores/settings-store";
 import { useChatStore } from "../../stores/chat-store";
 import { useMemoryStore } from "../../stores/memory-store";
-import { insertTask, updateTaskStatus, loadPendingTasks } from "../supabase/tasks-service";
+import { insertTask, updateTaskStatus, loadPendingTasks, syncProjectProgress } from "../supabase/tasks-service";
 import { getChangedFilesSummary } from "./project-files-reader";
 
 /** Estado de processamento de uma tarefa de agente */
@@ -103,6 +103,7 @@ class OrchestratorServiceImpl {
    */
   async processUserMessage(message: string, projectId: string): Promise<void> {
     if (this.processing) {
+      // Se ficou preso por mais de 15 minutos, reseta automaticamente
       useChatStore.getState().addMessage(
         "orchestrator",
         "Ainda estou processando a solicitacao anterior. Aguarde a conclusao.",
@@ -111,6 +112,17 @@ class OrchestratorServiceImpl {
     }
 
     this.processing = true;
+
+    // Safety timeout: se o pipeline travar, reseta após 20 minutos
+    const safetyTimeout = setTimeout(() => {
+      if (this.processing) {
+        console.warn("[OrchestratorService] Safety timeout: resetando processing flag após 20 minutos");
+        this.processing = false;
+        import("../../stores/project-store").then(({ useProjectStore }) => {
+          useProjectStore.getState().setCurrentPhase(null);
+        }).catch(() => {});
+      }
+    }, 20 * 60 * 1000);
 
     try {
       // Garante que esta inicializado
@@ -139,6 +151,17 @@ class OrchestratorServiceImpl {
           phase: this.inferPhaseFromRole((t.assigned_agent ?? "backend") as AgentRole),
         }));
 
+        // Seta fase inicial para que a UI mostre o indicador
+        const firstPhase = Math.min(...resumeExecutions.map((e) => e.phase));
+        const { useProjectStore } = await import("../../stores/project-store");
+        const phaseName = PHASE_NAMES[firstPhase] ?? `PHASE_${firstPhase}`;
+        useProjectStore.getState().setCurrentPhase({
+          phase: firstPhase,
+          name: phaseName,
+          totalTasks: resumeExecutions.filter((e) => e.phase === firstPhase).length,
+          completedTasks: 0,
+        });
+
         await this.executeTaskPipeline(resumeExecutions, projectId);
         this.processing = false;
         return;
@@ -158,39 +181,90 @@ class OrchestratorServiceImpl {
       // Configura o orchestrator no gateway
       llmGateway.setAgentConfig("orchestrator", orchDefaults.provider, orchDefaults.model);
 
+      // Indica fase de planejamento na UI
+      {
+        const { useProjectStore } = await import("../../stores/project-store");
+        useProjectStore.getState().setCurrentPhase({
+          phase: 0,
+          name: "PLANEJANDO",
+          totalTasks: 0,
+          completedTasks: 0,
+        });
+      }
+
       // Informa que esta decompondo
       const decomposingId = useChatStore.getState().addMessage(
         "orchestrator",
         "Analisando sua solicitacao e decompondo em tarefas para os agentes...",
       );
 
-      // Usa a última resposta do orchestrator no chat como plano
-      // (evita chamada dupla ao CLI — o chat já chamou e recebeu o plano)
-      const chatMessages = useChatStore.getState().messages;
-      const lastOrchestratorMsg = [...chatMessages]
-        .reverse()
-        .find((m) =>
-          m.from === "orchestrator" &&
-          m.content.length > 100 &&
-          !m.content.startsWith("[Erro") &&
-          !m.content.startsWith("Analisando") &&
-          !m.content.startsWith("Ainda estou") &&
-          !m.content.startsWith("Processamento interrompido") &&
-          // Deve conter listas numeradas ou bullets (indica plano)
-          (/\d+\.\s+\*\*/.test(m.content) || /^[-*]\s+\*\*/m.test(m.content)),
-        );
+      // Determina se é continuação automática ou mensagem livre do usuário
+      const isContinuation = message.includes("[CONTINUAR PROJETO]");
 
-      let tasks: DecomposedTask[];
+      // Só reutiliza plano do chat para continuação automática
+      // Mensagens livres do usuário ("melhore o Hero", "adicione contato") geram plano NOVO
+      let lastOrchestratorMsg: { content: string } | undefined;
+      if (isContinuation) {
+        const chatMessages = useChatStore.getState().messages;
+        lastOrchestratorMsg = [...chatMessages]
+          .reverse()
+          .find((m) =>
+            m.from === "orchestrator" &&
+            m.content.length > 100 &&
+            !m.content.startsWith("[Erro") &&
+            !m.content.startsWith("Analisando sua solicitacao") &&
+            !m.content.startsWith("Ainda estou") &&
+            !m.content.startsWith("Processamento interrompido") &&
+            !m.content.startsWith("Decompus") &&
+            !m.content.startsWith("Iniciando") &&
+            !m.content.startsWith("Enviando") &&
+            !m.content.startsWith("Review reprovou") &&
+            !m.content.startsWith("Projeto conclu") &&
+            !m.content.startsWith("Pipeline finalizado") &&
+            /\d+\.\s+\*\*[^*]+\*\*\s*\((?:architect|frontend|backend|database|qa|security|devops|reviewer|designer|pm)\)/i.test(m.content),
+          );
+      }
+
+      let tasks: DecomposedTask[] = [];
       try {
-        if (lastOrchestratorMsg) {
-          // Remove prefixo "Processando com Claude CLI..." se presente
-          const cleanContent = lastOrchestratorMsg.content.replace(/^Processando com Claude CLI\.\.\.\s*/i, "");
+        // Decomposição determinística baseada em regras — NÃO depende do CLI.
+        // O CLI é inconsistente para planejamento (responde conversacionalmente).
+        // Tenta primeiro extrair plano válido da resposta do chat (se o LLM respondeu corretamente).
+        // Se não encontrar, usa decomposição por regras baseada em keywords da mensagem.
+
+        const PLAN_PATTERN = /\d+\.\s+\*\*[^*]+\*\*\s*\((?:architect|frontend|backend|database|qa|security|devops|reviewer|designer|pm)\)/i;
+
+        // Tenta extrair de plano existente no chat (continuação ou resposta estruturada)
+        const chatMessages = useChatStore.getState().messages;
+        const planMsg = isContinuation ? lastOrchestratorMsg : [...chatMessages]
+          .reverse()
+          .find((m) =>
+            m.from === "orchestrator" &&
+            m.content.length > 50 &&
+            !m.content.startsWith("[Erro") &&
+            !m.content.startsWith("Analisando") &&
+            PLAN_PATTERN.test(m.content),
+          );
+
+        if (planMsg) {
+          const cleanContent = planMsg.content
+            .replace(/^⏳\s*Processando com Claude CLI\.\.\.\s*/i, "")
+            .replace(/\n\n_\(.+\)_$/, "");
           const decomposer = new LLMTaskDecomposer(llmGateway);
           tasks = decomposer.parseFromText(cleanContent);
-          console.log(`[OrchestratorService] Extraiu ${tasks.length} tarefas da resposta do chat`);
-        } else {
-          // Fallback: chama o CLI para decompor
-          tasks = await orchestrator.orchestrate(message);
+          const isRealPlan = tasks.length > 1 ||
+            (tasks.length === 1 && !tasks[0]!.description.includes("Criar PRD da solicitacao"));
+          if (isRealPlan) {
+            console.log(`[OrchestratorService] Extraiu ${tasks.length} tarefas do plano no chat`);
+          } else {
+            tasks = [];
+          }
+        }
+
+        // Fallback: decomposição determinística por regras (sem LLM)
+        if (tasks.length === 0) {
+          console.log("[OrchestratorService] Usando decomposição por regras (sem LLM)");
+          tasks = this.decomposeByRules(message);
         }
       } catch (error) {
         const errorMsg = error instanceof Error ? error.message : String(error);
@@ -201,6 +275,12 @@ class OrchestratorServiceImpl {
         return;
       }
 
+      // Limita a no máximo 8 tasks para evitar execuções infinitas
+      if (tasks.length > 8) {
+        console.warn(`[OrchestratorService] ${tasks.length} tasks extraídas, limitando a 8`);
+        tasks = tasks.slice(0, 8);
+      }
+
       if (tasks.length === 0) {
         useChatStore.getState().updateMessage(
           decomposingId,
@@ -209,22 +289,61 @@ class OrchestratorServiceImpl {
         return;
       }
 
-      // Monta resumo das tarefas
+      // Monta resumo das tarefas (limpa markdown duplo do title)
       const taskSummary = tasks
-        .map((t) => `- **${t.metadata.title ?? t.description.substring(0, 50)}** → ${t.targetRole} (Fase ${t.phase})`)
+        .map((t) => {
+          const rawTitle = t.metadata.title ?? t.description.substring(0, 50);
+          // Remove markdown e referências de fase que já existam no title
+          const cleanTitle = rawTitle.replace(/\*\*/g, "").replace(/→\s*\w+\s*\(Fase \d+\)/g, "").trim();
+          return `- **${cleanTitle}** → ${t.targetRole} (Fase ${t.phase})`;
+        })
         .join("\n");
 
       useChatStore.getState().updateMessage(
         decomposingId,
-        `Decompus sua solicitacao em **${tasks.length} tarefa(s)**:\n\n${taskSummary}\n\nDistribuindo para os agentes em fases...`,
+        `Decompus em **${tasks.length} tarefa(s)**:\n\n${taskSummary}\n\nDistribuindo para os agentes...`,
       );
 
       // Executa cada tarefa com o LLM do agente correspondente (em fases)
       const executions = this.buildExecutions(tasks, projectId);
       await this.executeTaskPipeline(executions, projectId);
 
+      // Pipeline completo — atualiza status e progresso final do projeto
+      {
+        const { useProjectStore } = await import("../../stores/project-store");
+        const activeId = useProjectStore.getState().activeProjectId;
+        if (activeId) {
+          const realProgress = await syncProjectProgress(activeId);
+          const finalStatus = realProgress >= 100 ? "done" : "in-progress";
+          useProjectStore.getState()._updateProject(activeId, {
+            progress: realProgress,
+            status: finalStatus,
+          });
+
+          // Persiste status no Supabase
+          const { getSupabaseClient } = await import("../supabase/safe-client");
+          const supabase = getSupabaseClient();
+          if (supabase) {
+            const dbStatus = finalStatus === "done" ? "completed" : "active";
+            await supabase.from("projects").update({ status: dbStatus, progress: realProgress }).eq("id", activeId);
+          }
+
+          useChatStore.getState().addMessage(
+            "orchestrator",
+            realProgress >= 100
+              ? "Projeto concluído! Todos os agentes finalizaram suas tarefas. Envie uma mensagem se quiser melhorar algo."
+              : `Pipeline finalizado (${realProgress}% concluído). Envie uma mensagem para continuar ou melhorar o projeto.`,
+          );
+        }
+      }
+
     } finally {
+      clearTimeout(safetyTimeout);
       this.processing = false;
+      // Limpa indicador de fase
+      import("../../stores/project-store").then(({ useProjectStore }) => {
+        useProjectStore.getState().setCurrentPhase(null);
+      }).catch(() => {});
     }
   }
 
@@ -427,6 +546,15 @@ class OrchestratorServiceImpl {
       phaseGroups.set(exec.phase, group);
     }
 
+    // Garante que Fase 4 (QUALITY) e Fase 5 (DELIVERY) sempre existam no pipeline
+    // mesmo que o decomposer não tenha criado tasks explícitas para elas
+    if (!phaseGroups.has(4) && phaseGroups.size > 0) {
+      phaseGroups.set(4, []); // runCodeReview cuida da Fase 4 internamente
+    }
+    if (!phaseGroups.has(5) && phaseGroups.size > 0) {
+      phaseGroups.set(5, []); // Pode ficar vazia se não há task de DevOps
+    }
+
     // Ordena fases
     const sortedPhases = [...phaseGroups.keys()].sort((a, b) => a - b);
 
@@ -441,15 +569,33 @@ class OrchestratorServiceImpl {
     for (const phaseNum of sortedPhases) {
       if (!this.processing) break;
 
-      const phaseTasks = phaseGroups.get(phaseNum);
-      if (!phaseTasks || phaseTasks.length === 0) continue;
+      const phaseTasks = phaseGroups.get(phaseNum) ?? [];
+      // Fase 4 (QUALITY) sempre roda via runCodeReview, mesmo sem tasks decompostas
+      // Fase 5 (DELIVERY) sempre roda via runDevOpsDelivery, mesmo sem tasks decompostas
+      if (phaseTasks.length === 0 && phaseNum !== 4 && phaseNum !== 5) continue;
 
       const phaseName = PHASE_NAMES[phaseNum] ?? `PHASE_${phaseNum}`;
       console.log(`[OrchestratorService] Iniciando Fase ${phaseNum} (${phaseName}) com ${phaseTasks.length} tarefa(s)`);
 
+      // Atualiza indicador de fase no store para a UI acompanhar
+      {
+        const { useProjectStore } = await import("../../stores/project-store");
+        useProjectStore.getState().setCurrentPhase({
+          phase: phaseNum,
+          name: phaseName,
+          totalTasks: phaseNum === 4 ? 4 : phaseNum === 5 ? Math.max(1, phaseTasks.length) : phaseTasks.length,
+          completedTasks: 0,
+        });
+      }
+
+      const taskCountLabel = phaseNum === 4
+        ? "4 revisores: Code Reviewer, QA, Security, Designer"
+        : phaseNum === 5
+          ? "1 tarefa: DevOps (build & deploy)"
+          : `${phaseTasks.length} tarefa(s)`;
       useChatStore.getState().addMessage(
         "orchestrator",
-        `Iniciando **Fase ${phaseNum} — ${phaseName}** (${phaseTasks.length} tarefa(s))...`,
+        `Iniciando **Fase ${phaseNum} — ${phaseName}** (${taskCountLabel})...`,
       );
 
       // Monta contexto compartilhado com outputs das fases anteriores
@@ -463,7 +609,7 @@ class OrchestratorServiceImpl {
 
       // Fase 4 (QUALITY): lê arquivos reais do disco em vez de texto de chat
       if (phaseNum === 4) {
-        const project = this.getProjectContext();
+        const project = await this.getProjectContext();
         if (project?.localPath) {
           try {
             const filesSummary = await getChangedFilesSummary(project.localPath);
@@ -472,6 +618,30 @@ class OrchestratorServiceImpl {
             console.warn("[OrchestratorService] Falha ao ler arquivos do projeto:", err);
           }
         }
+      }
+
+      // Fase 4 (QUALITY) é tratada pelo runCodeReview — pula execução normal
+      if (phaseNum === 4) {
+        if (this.processing) {
+          const reviewResult = await this.runCodeReview(executions, phaseOutputs, settings, projectId);
+          if (reviewResult === "retry") {
+            useChatStore.getState().addMessage(
+              "orchestrator",
+              "Review reprovou o codigo. Algumas tarefas marcadas como **blocked**.",
+            );
+          }
+        }
+        console.log(`[OrchestratorService] Fase ${phaseNum} (${phaseName}) concluída`);
+        continue;
+      }
+
+      // Fase 5 (DELIVERY) é tratada pelo runDevOpsDelivery se não houver tasks explícitas
+      if (phaseNum === 5 && phaseTasks.length === 0) {
+        if (this.processing) {
+          await this.runDevOpsDelivery(phaseOutputs, settings, projectId);
+        }
+        console.log(`[OrchestratorService] Fase ${phaseNum} (${phaseName}) concluída`);
+        continue;
       }
 
       // Executa tarefas da fase em paralelo (respeitando batch size)
@@ -518,22 +688,18 @@ class OrchestratorServiceImpl {
 
       // Coleta outputs da fase para passar como contexto para a próxima
       if (phaseNum === 1) {
-        // Fase 1 (PLANNING): salva PRD do PM
-        phaseOutputs.prd = phaseResults.get("pm") ?? "";
+        const prdOutput = phaseResults.get("pm") ?? "";
+        phaseOutputs.prd = prdOutput.startsWith("[Erro") ? "" : prdOutput;
       } else if (phaseNum === 2) {
-        // Fase 2 (ARCHITECTURE): salva arquitetura
-        phaseOutputs.architecture = phaseResults.get("architect") ?? "";
+        const archOutput = phaseResults.get("architect") ?? "";
+        phaseOutputs.architecture = archOutput.startsWith("[Erro") ? "" : archOutput;
       }
-      // Fase 3 cria arquivos → Fase 4 lê do disco (já tratado acima)
 
-      // Fase 4 (QUALITY): roda code review com arquivos reais
-      if (phaseNum === 4 && this.processing) {
-        const reviewResult = await this.runCodeReview(executions, phaseOutputs, settings, projectId);
-        if (reviewResult === "retry") {
-          useChatStore.getState().addMessage(
-            "orchestrator",
-            "Review reprovou o codigo. Algumas tarefas marcadas como **blocked**.",
-          );
+      // Fase 3 (DEVELOPMENT): após concluir, Designer revisa o frontend
+      if (phaseNum === 3 && this.processing) {
+        const hasFrontendTask = phaseTasks.some((t) => t.role === "frontend");
+        if (hasFrontendTask) {
+          await this.runDesignerReview(executions, phaseOutputs, settings, projectId);
         }
       }
 
@@ -546,7 +712,7 @@ class OrchestratorServiceImpl {
       if (verifyResult?.hasErrors) {
         // Manda o architect corrigir
         const fixExec: AgentTaskExecution = {
-          taskId: `fix_${Date.now()}`,
+          taskId: crypto.randomUUID(),
           agentId: "architect",
           role: "architect",
           description: `Corrija os seguintes erros de TypeScript no projeto. NAO crie novos arquivos, apenas corrija os erros existentes:\n\n${verifyResult.errors}`,
@@ -638,11 +804,28 @@ ${allTasksSummary}
     agentStore.setAgentTask(exec.agentId, exec.description.substring(0, 80));
     agentStore.setAgentProgress(exec.agentId, 10);
 
-    // Monta o prompt para o agente (com memórias do projeto e preferências)
-    const systemPrompt = this.buildAgentSystemPrompt(exec.role, projectId);
+    // Garante que o projeto está marcado como "in-progress"
+    {
+      const { useProjectStore } = await import("../../stores/project-store");
+      const activeId = useProjectStore.getState().activeProjectId;
+      if (activeId) {
+        const proj = useProjectStore.getState().getProject();
+        if (proj && proj.status !== "in-progress") {
+          useProjectStore.getState()._updateProject(activeId, { status: "in-progress" });
+        }
+      }
+    }
 
-    // Cria mensagem placeholder no chat
-    const msgId = useChatStore.getState().addMessage(exec.agentId, "");
+    // Monta o prompt para o agente (com memórias do projeto e preferências)
+    const systemPrompt = await this.buildAgentSystemPrompt(exec.role, projectId);
+
+    // Cria mensagem placeholder no chat com nome da task
+    // Extrai título limpo: tenta [Titulo] no description, senão pega as últimas linhas (após "## Sua tarefa especifica:")
+    const titleMatch = exec.description.match(/\[Fase \d+ - \w+\] \[(.+?)\]/);
+    const taskLabel = titleMatch?.[1]
+      ?? exec.description.split("\n").filter((l) => l.trim().length > 0 && !l.startsWith("##") && !l.startsWith("-") && !l.startsWith("Voce")).pop()?.substring(0, 60)
+      ?? exec.role;
+    const msgId = useChatStore.getState().addMessage(exec.agentId, `⏳ ${taskLabel}...`);
     useChatStore.getState().setStreaming(msgId, true);
 
     let accumulatedContent = "";
@@ -662,7 +845,12 @@ ${allTasksSummary}
 
       let chunkCount = 0;
       for await (const chunk of stream) {
-        accumulatedContent += chunk.content;
+        if (chunk.replace) {
+          // Provider pediu substituição total (ex: Claude CLI)
+          accumulatedContent = chunk.content;
+        } else {
+          accumulatedContent += chunk.content;
+        }
         chunkCount++;
 
         // Atualiza mensagem a cada N chunks para performance
@@ -679,13 +867,32 @@ ${allTasksSummary}
       useChatStore.getState().updateMessage(msgId, accumulatedContent);
       useChatStore.getState().setStreaming(msgId, false);
 
-      // Persiste status review no Supabase
-      updateTaskStatus(exec.taskId, "review").catch(() => {});
+      // Verifica se a resposta é um erro (não marca como Done se for erro)
+      const isError = accumulatedContent.startsWith("[Erro") ||
+        accumulatedContent.includes("Erro do CLI") ||
+        accumulatedContent.includes("Erro ao comunicar") ||
+        accumulatedContent.length === 0;
 
-      // Persiste task como done no Supabase
-      updateTaskStatus(exec.taskId, "done", {
+      if (isError) {
+        // Agente ficou bloqueado — não marcar como Done
+        updateTaskStatus(exec.taskId, "blocked", { reason: accumulatedContent.slice(0, 200) }).catch(() => {});
+        agentRuntime.completeCurrentTask(exec.agentId, "failure", accumulatedContent.substring(0, 200));
+        useAgentsStore.getState().setAgentStatus(exec.agentId, AgentStatus.Blocked);
+        useAgentsStore.getState().setAgentTask(exec.agentId, "Erro na execução");
+        return accumulatedContent;
+      }
+
+      // Sucesso: marca como review
+      useAgentsStore.getState().setAgentStatus(exec.agentId, AgentStatus.Review);
+      useAgentsStore.getState().setAgentTask(exec.agentId, "Revisando resultado...");
+
+      // Pequena pausa visual para o usuário ver o estado "Review"
+      await new Promise((r) => setTimeout(r, 1500));
+
+      // Persiste task como done no Supabase — AWAIT para garantir que está salvo antes de calcular progresso
+      await updateTaskStatus(exec.taskId, "done", {
         outputLength: accumulatedContent.length,
-      }).catch(() => {});
+      });
 
       // Marca tarefa como concluida
       agentRuntime.completeCurrentTask(
@@ -698,23 +905,25 @@ ${allTasksSummary}
       useAgentsStore.getState().setAgentStatus(exec.agentId, AgentStatus.Done);
       useAgentsStore.getState().setAgentTask(exec.agentId, "Concluído");
 
-      // Salva progresso no projeto (persiste entre reloads)
-      const { useProjectStore } = await import("../../stores/project-store");
-      const activeId = useProjectStore.getState().activeProjectId;
-      if (activeId) {
-        const taskTitle = exec.description.substring(0, 100);
-        const project = useProjectStore.getState().getProject();
-        if (project) {
-          const newTasks = project.completedTasks.includes(taskTitle)
-            ? project.completedTasks
-            : [...project.completedTasks, taskTitle];
-          useProjectStore.getState()._updateProject(activeId, { completedTasks: newTasks });
+      // Calcula e persiste progresso real DEPOIS de confirmar que task foi salva
+      {
+        const { useProjectStore } = await import("../../stores/project-store");
+        const activeId = useProjectStore.getState().activeProjectId;
+        if (activeId) {
+          const taskTitle = exec.description.substring(0, 100);
+          const project = useProjectStore.getState().getProject();
+          if (project) {
+            const newTasks = project.completedTasks.includes(taskTitle)
+              ? project.completedTasks
+              : [...project.completedTasks, taskTitle];
 
-          // Sync com Supabase (fire-and-forget)
-          const { getSupabaseClient } = await import("../supabase/safe-client");
-          const supabase = getSupabaseClient();
-          if (supabase) {
-            supabase.from("projects").update({ progress: project.progress }).eq("id", activeId).then();
+            const realProgress = await syncProjectProgress(activeId);
+            console.log(`[OrchestratorService] Progresso atualizado: ${realProgress}% (task: ${taskTitle.substring(0, 40)})`);
+
+            useProjectStore.getState()._updateProject(activeId, {
+              completedTasks: newTasks,
+              progress: realProgress,
+            });
           }
         }
       }
@@ -742,13 +951,17 @@ ${allTasksSummary}
     } catch (error) {
       useChatStore.getState().setStreaming(msgId, false);
 
+      const errorMsg = error instanceof Error ? error.message : String(error);
       if (accumulatedContent.length === 0) {
-        const errorMsg = error instanceof Error ? error.message : String(error);
         useChatStore.getState().updateMessage(
           msgId,
           `Erro ao executar tarefa: ${errorMsg}`,
         );
       }
+
+      // Marca agente como bloqueado (não Done!)
+      useAgentsStore.getState().setAgentStatus(exec.agentId, AgentStatus.Blocked);
+      useAgentsStore.getState().setAgentTask(exec.agentId, `Erro: ${errorMsg.substring(0, 60)}`);
 
       throw error;
     }
@@ -759,7 +972,7 @@ ${allTasksSummary}
    * Roda `npx tsc --noEmit` via endpoint e retorna erros se houver.
    */
   private async verifyProjectCode(_projectId: string): Promise<{ hasErrors: boolean; errors: string } | null> {
-    const project = this.getProjectContext();
+    const project = await this.getProjectContext();
     if (!project?.localPath) return null;
 
     try {
@@ -871,44 +1084,48 @@ ${allTasksSummary}
     allExecutions: AgentTaskExecution[],
     phaseOutputs: PhaseOutputs,
     settings: ReturnType<typeof useSettingsStore.getState>,
-    _projectId: string,
+    projectId: string,
   ): Promise<"approved" | "retry"> {
-    const project = this.getProjectContext();
+    const project = await this.getProjectContext();
+    console.log(`[OrchestratorService] runCodeReview: project=${project?.name ?? "null"}, localPath=${project?.localPath ?? "null"}, changedFiles=${phaseOutputs.changedFilesSummary?.length ?? 0} chars`);
 
     // Lê arquivos reais do disco para passar ao review
     let codeToReview = phaseOutputs.changedFilesSummary;
     if ((!codeToReview || codeToReview.length === 0) && project?.localPath) {
       try {
         codeToReview = await getChangedFilesSummary(project.localPath);
-      } catch {
-        console.warn("[OrchestratorService] Nao foi possivel ler arquivos para review");
+        console.log(`[OrchestratorService] getChangedFilesSummary retornou ${codeToReview?.length ?? 0} chars`);
+      } catch (err) {
+        console.warn("[OrchestratorService] Nao foi possivel ler arquivos para review:", err);
       }
     }
 
     if (!codeToReview || codeToReview.length === 0) {
-      console.warn("[OrchestratorService] Sem arquivos para revisar, aprovando automaticamente");
+      const reason = !project ? "projeto null" : !project.localPath ? "localPath null" : "nenhum arquivo encontrado";
+      console.warn(`[OrchestratorService] Sem arquivos para revisar (${reason}), aprovando automaticamente`);
+      useChatStore.getState().addMessage(
+        "orchestrator",
+        `⚠️ Fase 4 pulada: ${reason}. Os revisores precisam de arquivos no projeto para revisar.`,
+      );
       return "approved";
     }
 
-    // Roles de review que vamos rodar em paralelo (inclui designer para revisão de UI)
+    // Todos os roles de qualidade rodam na Fase 4 — NENHUM é excluído
     const reviewRoles: AgentRole[] = ["reviewer", "qa", "security", "designer"];
-
-    // Filtra: não revisa a si mesmo (se um reviewer tiver task na Fase 4, pula)
-    const phase4Roles = new Set(
-      allExecutions.filter((e) => e.phase === 4).map((e) => e.role),
-    );
-
-    const activeReviewRoles = reviewRoles.filter((role) => !phase4Roles.has(role) || role !== role);
-    // Na prática: reviewer não revisa reviewer, qa não revisa qa, etc.
-    // Mas todos revisam o código dos agentes de Fase 3
 
     const agentStore = useAgentsStore.getState();
     let anyRejected = false;
 
-    // Roda os 3 reviewers em paralelo
-    const reviewPromises = activeReviewRoles.map(async (reviewRole) => {
+    useChatStore.getState().addMessage(
+      "orchestrator",
+      `Iniciando revisão com **${reviewRoles.length} agentes**: Code Reviewer, QA, Security e Designer...`,
+    );
+
+    // Roda todos os reviewers em paralelo
+    const reviewPromises = reviewRoles.map(async (reviewRole) => {
       const reviewerDefaults = settings.agentDefaults[reviewRole];
       if (!reviewerDefaults || !settings.isProviderConfigured(reviewerDefaults.provider)) {
+        console.log(`[OrchestratorService] ${reviewRole} sem provider configurado, pulando`);
         return; // Sem provider → pula
       }
 
@@ -938,12 +1155,13 @@ ${allTasksSummary}
 
         // Monta prompt específico por role de review
         const reviewPromptMap: Record<string, string> = {
-          reviewer: `Revise o codigo abaixo. Verifique:
+          reviewer: `Revise o codigo abaixo como Code Reviewer. Verifique:
 1. Erros de logica ou bugs obvios
 2. Imports incorretos ou faltando
 3. Tipos TypeScript incorretos (nunca any)
 4. Codigo incompleto (stubs, TODOs)
-5. Padroes de codigo inconsistentes`,
+5. Padroes de codigo inconsistentes
+6. Nomes de variaveis/funcoes claros`,
           qa: `Como QA Engineer, verifique o codigo abaixo:
 1. Existem testes para as funcionalidades principais?
 2. Ha edge cases nao tratados?
@@ -956,75 +1174,214 @@ ${allTasksSummary}
 3. Validacao de input insuficiente
 4. Problemas de autenticacao/autorizacao
 5. Dependencias com vulnerabilidades conhecidas`,
+          designer: `Como UI/UX Designer, revise o codigo da interface abaixo:
+1. Hierarquia visual e layout
+2. Consistencia de cores, espacamento e tipografia
+3. Responsividade (mobile/desktop)
+4. Acessibilidade (a11y: contraste, labels, foco)
+5. UX: estados de loading, erro, vazio tratados?
+6. Feedback visual para acoes do usuario`,
         };
 
         const reviewPrompt = reviewPromptMap[reviewRole] ?? reviewPromptMap.reviewer;
 
-        const reviewResponse = await llmGateway.send({
-          agentId: reviewerAgent.id,
-          messages: [
-            {
-              role: "user",
-              content: `${reviewPrompt}
+        const roleNames: Record<string, string> = {
+          reviewer: "Code Reviewer",
+          qa: "QA Engineer",
+          security: "Security Engineer",
+          designer: "UI/UX Designer",
+        };
 
-Se estiver OK, responda apenas: APROVADO
-Se tiver problemas, responda: REPROVADO seguido da lista de problemas.
+        // Usa executeAgentTask para ter streaming e visibilidade no chat
+        const reviewExec: AgentTaskExecution = {
+          taskId: crypto.randomUUID(),
+          agentId: reviewerAgent.id,
+          role: reviewRole,
+          description: `${reviewPrompt}
+
+Se estiver OK, responda: APROVADO seguido de um breve resumo do que revisou.
+Se tiver problemas, responda: REPROVADO seguido da lista de problemas a corrigir.
 
 --- CODIGO DO PROJETO ---
 ${codeToReview.substring(0, 6000)}`,
-            },
-          ],
-          model: reviewerDefaults.model,
-          temperature: 0.2,
-          maxTokens: 1024,
-          systemPrompt: `Voce e um ${reviewRole === "reviewer" ? "Code Reviewer" : reviewRole === "qa" ? "QA Engineer" : "Security Engineer"}. Seja conciso. Responda APROVADO ou REPROVADO.`,
-          metadata: {},
-        });
+          phase: 4,
+        };
 
-        const approved = !reviewResponse.content.toUpperCase().includes("REPROVADO");
+        const output = await this.executeAgentTask(reviewExec, settings, projectId);
+        const approved = !output.toUpperCase().includes("REPROVADO");
 
-        if (approved) {
-          useChatStore.getState().addMessage(reviewerAgent.id, `APROVADO (${reviewRole})`);
-        } else {
-          useChatStore.getState().addMessage(
-            reviewerAgent.id,
-            `REPROVADO (${reviewRole}): ${reviewResponse.content.substring(0, 500)}`,
-          );
+        if (!approved) {
           anyRejected = true;
         }
 
-        agentStore.setAgentStatus(reviewerAgent.id, AgentStatus.Done);
-        agentStore.setAgentTask(reviewerAgent.id, null);
+        console.log(`[OrchestratorService] ${roleNames[reviewRole] ?? reviewRole}: ${approved ? "APROVADO" : "REPROVADO"}`);
       } catch (error) {
         const msg = error instanceof Error ? error.message : String(error);
         console.warn(`[OrchestratorService] Review (${reviewRole}) falhou: ${msg}`);
-        // Se review falha, não bloqueia o fluxo
-        agentStore.setAgentStatus(reviewerAgent.id, AgentStatus.Done);
-        agentStore.setAgentTask(reviewerAgent.id, null);
+        agentStore.setAgentStatus(reviewerAgent.id, AgentStatus.Blocked);
+        agentStore.setAgentTask(reviewerAgent.id, `Erro: ${msg.substring(0, 50)}`);
       }
     });
 
     await Promise.allSettled(reviewPromises);
 
-    // Se QUALQUER reviewer reprovou, retorna retry
+    // Checa resultado ANTES de marcar tasks
     if (anyRejected) {
-      // Marca tasks da Fase 3 como blocked
+      // Marca tasks da Fase 3 como blocked (precisam ser refeitas)
       for (const exec of allExecutions) {
         if (exec.phase === 3) {
-          updateTaskStatus(exec.taskId, "blocked", { reason: "review_rejected" }).catch(() => {});
+          await updateTaskStatus(exec.taskId, "blocked", { reason: "review_rejected" });
+        }
+        if (exec.phase === 4) {
+          await updateTaskStatus(exec.taskId, "blocked", { reason: "review_rejected_others" });
         }
       }
       return "retry";
+    }
+
+    // Sucesso: marca tasks da Fase 4 como done
+    for (const exec of allExecutions) {
+      if (exec.phase === 4) {
+        await updateTaskStatus(exec.taskId, "done", { executedBy: "runCodeReview" });
+      }
+    }
+
+    // Atualiza progresso após Fase 4
+    {
+      const { useProjectStore } = await import("../../stores/project-store");
+      const activeId = useProjectStore.getState().activeProjectId;
+      if (activeId) {
+        const realProgress = await syncProjectProgress(activeId);
+        useProjectStore.getState()._updateProject(activeId, { progress: realProgress });
+      }
     }
 
     return "approved";
   }
 
   /**
+   * Revisão do Designer após Fase 3 (Development).
+   * O Designer analisa o trabalho do Frontend e pode reprovar.
+   */
+  private async runDesignerReview(
+    _allExecutions: AgentTaskExecution[],
+    phaseOutputs: PhaseOutputs,
+    settings: ReturnType<typeof useSettingsStore.getState>,
+    projectId: string,
+  ): Promise<"approved" | "needs_changes"> {
+    const designerDefaults = settings.agentDefaults.designer;
+    if (!designerDefaults || !settings.isProviderConfigured(designerDefaults.provider)) {
+      console.log("[OrchestratorService] Designer sem provider configurado, pulando revisão UI");
+      return "approved";
+    }
+
+    const agentStore = useAgentsStore.getState();
+    const designerAgent = agentStore.agents.find((a) => a.role === "designer");
+    if (!designerAgent) return "approved";
+
+    // Lê arquivos do projeto para o designer analisar
+    const project = await this.getProjectContext();
+    let codeToReview = phaseOutputs.changedFilesSummary;
+    if ((!codeToReview || codeToReview.length === 0) && project?.localPath) {
+      try {
+        codeToReview = await getChangedFilesSummary(project.localPath);
+        phaseOutputs.changedFilesSummary = codeToReview;
+      } catch {
+        // sem arquivos para revisar
+      }
+    }
+
+    if (!codeToReview || codeToReview.length === 0) {
+      console.log("[OrchestratorService] Sem arquivos frontend para designer revisar");
+      return "approved";
+    }
+
+    useChatStore.getState().addMessage(
+      "orchestrator",
+      "Enviando para o **Designer** revisar a interface antes de avançar...",
+    );
+
+    // Walker visual
+    eventBus.publish(EventType.AGENT_WALKING, {
+      agentId: `walk-designer-${Date.now()}`,
+      fromAgentId: "frontend",
+      toAgentId: designerAgent.id,
+      label: "Review UI/UX",
+      waypoints: [],
+      timestamp: new Date().toISOString(),
+    });
+
+    agentStore.setAgentStatus(designerAgent.id, AgentStatus.Review);
+    agentStore.setAgentTask(designerAgent.id, "Revisando interface do Frontend...");
+
+    try {
+      llmGateway.setAgentConfig(designerAgent.id, designerDefaults.provider, designerDefaults.model);
+
+      const designerExec: AgentTaskExecution = {
+        taskId: crypto.randomUUID(),
+        agentId: designerAgent.id,
+        role: "designer",
+        description: `Revise a interface criada pelo Frontend Dev. Analise:
+- Layout e hierarquia visual
+- Consistência de cores e tipografia
+- Responsividade
+- Acessibilidade (a11y)
+- UX (fluxo do usuário, feedback visual, estados de loading/erro/vazio)
+
+Se tiver problemas, liste as correções necessárias para o Frontend aplicar.
+Se estiver tudo OK, responda APROVADO.
+
+--- CÓDIGO DA INTERFACE ---
+${codeToReview.substring(0, 6000)}`,
+        phase: 3,
+      };
+
+      const output = await this.executeAgentTask(designerExec, settings, projectId);
+      const approved = !output.toUpperCase().includes("REPROVADO") && !output.toUpperCase().includes("CORREÇÕES");
+
+      if (approved) {
+        useChatStore.getState().addMessage(designerAgent.id, "Interface APROVADA pelo Designer.");
+        agentStore.setAgentStatus(designerAgent.id, AgentStatus.Done);
+        agentStore.setAgentTask(designerAgent.id, "UI/UX Aprovada");
+        return "approved";
+      }
+
+      // Designer reprovou — manda frontend corrigir
+      useChatStore.getState().addMessage(
+        "orchestrator",
+        "Designer solicitou correções no Frontend. Enviando feedback...",
+      );
+
+      const frontendAgent = agentStore.agents.find((a) => a.role === "frontend");
+      if (frontendAgent) {
+        const fixExec: AgentTaskExecution = {
+          taskId: crypto.randomUUID(),
+          agentId: frontendAgent.id,
+          role: "frontend",
+          description: `O Designer revisou sua interface e pediu as seguintes correções. Aplique TODAS:\n\n${output}`,
+          phase: 3,
+        };
+        await this.executeAgentTask(fixExec, settings, projectId);
+      }
+
+      agentStore.setAgentStatus(designerAgent.id, AgentStatus.Done);
+      agentStore.setAgentTask(designerAgent.id, "Correções aplicadas");
+      return "needs_changes";
+
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      console.warn(`[OrchestratorService] Designer review falhou: ${msg}`);
+      agentStore.setAgentStatus(designerAgent.id, AgentStatus.Blocked);
+      agentStore.setAgentTask(designerAgent.id, `Erro: ${msg.substring(0, 50)}`);
+      return "approved"; // Não bloqueia o fluxo se designer falhar
+    }
+  }
+
+  /**
    * Constroi system prompt especifico para cada role de agente.
    */
-  private buildAgentSystemPrompt(role: AgentRole, projectId?: string): string {
-    const project = this.getProjectContext();
+  private async buildAgentSystemPrompt(role: AgentRole, projectId?: string): Promise<string> {
+    const project = await this.getProjectContext();
     const projectCtx = project
       ? `\n\n## Contexto do Projeto\n- Nome: ${project.name}\n- Descricao: ${project.description}${project.localPath ? `\n- Pasta do projeto: ${project.localPath}` : ""}`
       : "";
@@ -1038,6 +1395,9 @@ ${codeToReview.substring(0, 6000)}`,
 VOCE NAO TEM USUARIO. Execute diretamente. Crie os arquivos AGORA.
 
 REGRAS:
+- **PRIMEIRO: liste os arquivos que ja existem na pasta do projeto** antes de criar qualquer coisa. Use Read/Glob/ls.
+- **NAO recrie** arquivos que ja existem e estao corretos. Apenas crie o que falta ou corrija o que tem erro.
+- Se o projeto ja tem package.json, tsconfig, etc., NAO sobrescreva — apenas adicione o que falta.
 - CRIE ARQUIVOS DIRETAMENTE. Nao peca permissao. Nao faca perguntas.
 - SOMENTE CODIGO. NAO crie README, documentacao, exemplos de uso, ou comentarios longos.
 - NAO escreva resumos do que fez. NAO use emojis. NAO liste "funcionalidades implementadas".
@@ -1200,19 +1560,226 @@ REGRAS:
   }
 
   /**
+   * Executa Fase 5 (DELIVERY) com o agente DevOps quando não há task explícita.
+   * Cria automaticamente Dockerfile, docker-compose e CI/CD pipeline.
+   */
+  private async runDevOpsDelivery(
+    phaseOutputs: PhaseOutputs,
+    settings: ReturnType<typeof useSettingsStore.getState>,
+    projectId: string,
+  ): Promise<void> {
+    const devopsDefaults = settings.agentDefaults.devops;
+    if (!devopsDefaults || !settings.isProviderConfigured(devopsDefaults.provider)) {
+      console.log("[OrchestratorService] DevOps sem provider configurado, pulando delivery");
+      return;
+    }
+
+    const agentStore = useAgentsStore.getState();
+    const devopsAgent = agentStore.agents.find((a) => a.role === "devops");
+    if (!devopsAgent) return;
+
+    const project = await this.getProjectContext();
+
+    // Lê arquivos do projeto para contexto
+    let projectFiles = phaseOutputs.changedFilesSummary;
+    if ((!projectFiles || projectFiles.length === 0) && project?.localPath) {
+      try {
+        projectFiles = await getChangedFilesSummary(project.localPath);
+      } catch {
+        // sem arquivos
+      }
+    }
+
+    useChatStore.getState().addMessage(
+      "orchestrator",
+      "Enviando para o **DevOps** criar configurações de build e deploy...",
+    );
+
+    // Walker visual
+    eventBus.publish(EventType.AGENT_WALKING, {
+      agentId: `walk-devops-${Date.now()}`,
+      fromAgentId: "orchestrator",
+      toAgentId: devopsAgent.id,
+      label: "Build & Deploy",
+      waypoints: [],
+      timestamp: new Date().toISOString(),
+    });
+
+    const devopsExec: AgentTaskExecution = {
+      taskId: crypto.randomUUID(),
+      agentId: devopsAgent.id,
+      role: "devops",
+      description: `Crie as configurações de build e deploy para o projeto:
+1. Dockerfile multi-stage (build + runtime)
+2. docker-compose.yml para desenvolvimento local
+3. CI/CD pipeline (GitHub Actions) com lint, test e build
+4. Scripts utilitários (start, build, deploy) se necessário
+
+${project?.name ? `Projeto: ${project.name}` : ""}
+${phaseOutputs.architecture ? `\n## Arquitetura\n${phaseOutputs.architecture.substring(0, 3000)}` : ""}
+${projectFiles ? `\n## Arquivos do projeto\n${projectFiles.substring(0, 4000)}` : ""}`,
+      phase: 5,
+    };
+
+    try {
+      await this.executeAgentTask(devopsExec, settings, projectId);
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      console.warn(`[OrchestratorService] DevOps delivery falhou: ${msg}`);
+      agentStore.setAgentStatus(devopsAgent.id, AgentStatus.Blocked);
+      agentStore.setAgentTask(devopsAgent.id, `Erro: ${msg.substring(0, 50)}`);
+    }
+  }
+
+  /**
    * Obtem contexto do projeto ativo a partir do store.
    */
-  private getProjectContext(): { name: string; description: string; localPath: string | null } | null {
+  private async getProjectContext(): Promise<{ name: string; description: string; localPath: string | null } | null> {
     try {
-      const { useProjectStore } = require("@/stores/project-store") as {
-        useProjectStore: { getState: () => { getProject: () => { name: string; description: string; localPath: string | null } | null } };
-      };
+      const { useProjectStore } = await import("../../stores/project-store");
       const project = useProjectStore.getState().getProject();
       if (!project) return null;
       return { name: project.name, description: project.description, localPath: project.localPath };
     } catch {
       return null;
     }
+  }
+
+  /**
+   * Decomposição determinística baseada em regras (sem LLM).
+   * Analisa keywords na mensagem do usuário e gera plano apropriado.
+   * 100% confiável — não depende do CLI ou API.
+   */
+  private decomposeByRules(message: string): DecomposedTask[] {
+    const lower = message.toLowerCase();
+    const tasks: DecomposedTask[] = [];
+
+    const makeTask = (
+      title: string,
+      description: string,
+      role: AgentRole,
+      phase: 1 | 2 | 3 | 4 | 5,
+      deps: string[],
+    ): DecomposedTask => {
+      const id = crypto.randomUUID();
+      return {
+        id,
+        description: `[Fase ${phase} - ${PHASE_NAMES[phase]}] [${title}] ${description}`,
+        targetRole: role,
+        priority: phase <= 2 ? "critical" : "high",
+        dependencies: deps,
+        estimatedMinutes: 15,
+        phase,
+        metadata: {
+          title,
+          phase: String(phase),
+          phaseName: PHASE_NAMES[phase] ?? `PHASE_${phase}`,
+          originalDependencies: "",
+        },
+      };
+    };
+
+    // Detecta tipo de pedido
+    const isImprovement = /melhor|ajust|revis|corrig|atualiz|refator|otimiz|redesign|modific|alter/i.test(lower);
+    const isNewProject = /cri[ea]|novo|nova|desenvolv|faz|construi|implement|mont/i.test(lower) && !isImprovement;
+
+    // Detecta áreas mencionadas
+    const mentionsUI = /ui|ux|interface|visual|layout|card|menu|header|footer|hero|botao|botão|estilo|cor|fonte|tela|pagina|página|design|responsiv|mobile|acessibilid/i.test(lower);
+    const mentionsBackend = /backend|api|servidor|endpoint|servico|serviço|autenticac|banco|database|schema|migration/i.test(lower);
+    const mentionsFrontend = /frontend|componente|react|hook|estado|state|formulari|lista|tabela|grid|modal/i.test(lower);
+
+    if (isImprovement) {
+      // ── MELHORIA ──────────────────────────────────────────────────────
+      if (mentionsUI || (!mentionsBackend && !mentionsFrontend)) {
+        // Melhoria de UI/UX (ou pedido genérico sem área específica)
+        const designTask = makeTask(
+          "Revisar UI/UX e propor melhorias",
+          `Analise a interface atual do projeto e proponha melhorias visuais baseadas no pedido do usuario: "${message}". Foque em: hierarquia visual, espacamento, tipografia, cores, hover effects, sombras, responsividade e acessibilidade. Liste as mudancas especificas que o Frontend deve implementar.`,
+          "designer",
+          3,
+          [],
+        );
+        tasks.push(designTask);
+
+        tasks.push(makeTask(
+          "Implementar melhorias visuais",
+          `Implemente as melhorias de UI/UX no projeto conforme o pedido: "${message}". Atualize os componentes existentes com: design mais moderno, hover effects, sombras, espacamento consistente, tipografia melhorada, responsividade. NAO crie novos componentes se os existentes podem ser melhorados.`,
+          "frontend",
+          3,
+          [designTask.id],
+        ));
+      }
+
+      if (mentionsBackend) {
+        tasks.push(makeTask(
+          "Melhorar backend/API",
+          `Melhore o backend conforme pedido: "${message}". Otimize endpoints, corrija bugs, melhore tratamento de erros.`,
+          "backend",
+          3,
+          [],
+        ));
+      }
+
+      if (mentionsFrontend && !mentionsUI) {
+        tasks.push(makeTask(
+          "Melhorar componentes frontend",
+          `Melhore os componentes React conforme pedido: "${message}". Corrija bugs, otimize performance, melhore UX.`,
+          "frontend",
+          3,
+          [],
+        ));
+      }
+    } else if (isNewProject) {
+      // ── NOVO PROJETO ──────────────────────────────────────────────────
+      const pmTask = makeTask(
+        "Criar PRD do projeto",
+        `Analise o pedido do usuario e crie um PRD completo: "${message}". Inclua requisitos funcionais, nao-funcionais, user stories e criterios de aceitacao.`,
+        "pm",
+        1,
+        [],
+      );
+      tasks.push(pmTask);
+
+      const archTask = makeTask(
+        "Definir arquitetura e setup",
+        `Crie a estrutura do projeto: package.json, tsconfig.json, vite.config.ts, tailwind.config.ts, index.html, estrutura de pastas (src/components, src/pages, src/types, src/data). Defina tipos TypeScript e convencoes.`,
+        "architect",
+        2,
+        [pmTask.id],
+      );
+      tasks.push(archTask);
+
+      tasks.push(makeTask(
+        "Implementar interface frontend",
+        `Crie todos os componentes React com TypeScript e Tailwind CSS conforme a arquitetura definida. Pedido do usuario: "${message}". Codigo completo e funcional.`,
+        "frontend",
+        3,
+        [archTask.id],
+      ));
+
+      if (mentionsBackend) {
+        tasks.push(makeTask(
+          "Implementar backend/API",
+          `Crie os servicos e endpoints conforme a arquitetura. Pedido: "${message}".`,
+          "backend",
+          3,
+          [archTask.id],
+        ));
+      }
+    } else {
+      // ── PEDIDO GENÉRICO ────────────────────────────────────────────────
+      // Interpreta como melhoria de frontend por padrão
+      tasks.push(makeTask(
+        "Executar pedido do usuario",
+        `Execute o seguinte pedido no projeto: "${message}". Analise o codigo existente e faca as alteracoes necessarias.`,
+        "frontend",
+        3,
+        [],
+      ));
+    }
+
+    console.log(`[OrchestratorService] Regras geraram ${tasks.length} tarefas: ${tasks.map((t) => t.targetRole).join(", ")}`);
+    return tasks;
   }
 }
 

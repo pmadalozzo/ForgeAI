@@ -16,7 +16,9 @@ import { useAppStore } from "@/stores/app-store";
 import { useAuthStore } from "@/stores/auth-store";
 import { useProjectStore } from "@/stores/project-store";
 import { useMemoryStore } from "@/stores/memory-store";
+import { useChatStore } from "@/stores/chat-store";
 import { useProjects } from "@/hooks/useProjects";
+import { getProjectProgress } from "@/services/supabase/tasks-service";
 import { getSupabaseClient } from "@/services/supabase/safe-client";
 import { llmGateway } from "@/services/llm/llm-gateway";
 import { ClaudeProvider } from "@/services/llm/providers/claude-provider";
@@ -165,13 +167,51 @@ function App() {
     }
   }, [isAuthenticated]);
 
-  // Carrega memórias quando o projeto ativo muda
+  // Carrega memórias, mensagens e progresso quando o projeto ativo muda
   useEffect(() => {
-    if (activeProjectId) {
-      useMemoryStore.getState().loadMemories(activeProjectId).catch(() => {
-        console.warn("[App] Falha ao carregar memórias do Supabase");
-      });
-    }
+    if (!activeProjectId) return;
+
+    // Guarda o ID para checar se ainda é o projeto ativo quando os loads terminarem
+    const loadingProjectId = activeProjectId;
+    let cancelled = false;
+
+    // Limpa chat do projeto anterior antes de carregar o novo
+    useChatStore.getState().clearMessages();
+
+    // Carrega tudo em paralelo
+    const loadAll = async () => {
+      try {
+        await Promise.all([
+          useMemoryStore.getState().loadMemories(loadingProjectId).catch(() => {
+            console.warn("[App] Falha ao carregar memórias do Supabase");
+          }),
+          useChatStore.getState().loadMessagesFromSupabase(loadingProjectId).catch(() => {
+            console.warn("[App] Falha ao carregar mensagens do Supabase");
+          }),
+          getProjectProgress(loadingProjectId).then(({ progress, completedTasks }) => {
+            if (cancelled) return;
+            // Só atualiza se ainda é o mesmo projeto
+            if (useProjectStore.getState().activeProjectId === loadingProjectId) {
+              useProjectStore.getState()._updateProject(loadingProjectId, {
+                progress,
+                completedTasks,
+              });
+              console.log(`[App] Progresso carregado: ${progress}% (${completedTasks.length} tasks concluídas)`);
+            }
+          }).catch(() => {
+            console.warn("[App] Falha ao carregar progresso do Supabase");
+          }),
+        ]);
+      } catch {
+        // Erros individuais já tratados acima
+      }
+    };
+
+    void loadAll();
+
+    return () => {
+      cancelled = true;
+    };
   }, [activeProjectId]);
 
   // Auto-detecta API keys do ambiente

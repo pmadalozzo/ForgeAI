@@ -40,10 +40,11 @@ const IGNORED_DIRS: ReadonlyArray<string> = [
   ".turbo", ".cache", "__pycache__", ".svelte-kit",
 ];
 
-/** Extensoes de arquivo priorizadas para revisao */
-const PRIORITY_EXTENSIONS: ReadonlyArray<string> = [
+/** Extensoes de arquivo priorizadas para revisao (usado por listRecentFiles) */
+const _PRIORITY_EXTENSIONS: ReadonlyArray<string> = [
   ".ts", ".tsx",
 ];
+void _PRIORITY_EXTENSIONS;
 
 /** Extensoes validas para leitura (todas que interessam aos agentes) */
 const VALID_EXTENSIONS: ReadonlyArray<string> = [
@@ -251,77 +252,59 @@ ${catCommands}`;
 }
 
 /**
- * Retorna um resumo formatado dos arquivos recentemente alterados e seus conteudos.
+ * Retorna um resumo formatado dos arquivos do projeto (src/) e seus conteudos.
  * Projetado para ser injetado diretamente no prompt de agentes revisores.
  *
+ * Usa o Claude CLI para listar e ler — funciona em Windows e Linux.
  * Prioriza arquivos .ts e .tsx. Ignora node_modules, dist, .git.
  * Limita o output total a 8000 caracteres.
  *
  * @param projectPath — Caminho absoluto do diretorio do projeto
- * @returns Texto formatado com blocos de codigo dos arquivos alterados
+ * @returns Texto formatado com blocos de codigo dos arquivos do projeto
  */
 export async function getChangedFilesSummary(projectPath: string): Promise<string> {
-  // Busca arquivos alterados nos ultimos 10 minutos
-  const tenMinutesMs = 10 * 60 * 1000;
-  const recentFiles = await listRecentFiles(projectPath, tenMinutesMs);
+  // Lê arquivos do projeto via endpoint direto do Vite (sem CLI).
+  // O CLI respondia com garbage conversacional em vez de listar arquivos.
+  try {
+    const response = await fetch("/api/project/files", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ projectPath, maxFiles: 10 }),
+    });
 
-  if (recentFiles.length === 0) {
-    return "[Nenhum arquivo alterado recentemente no projeto]";
-  }
-
-  // Ordena priorizando .ts/.tsx primeiro, depois por data de modificacao
-  const sorted = [...recentFiles].sort((a, b) => {
-    const aIsPriority = PRIORITY_EXTENSIONS.some((ext) => a.path.endsWith(ext));
-    const bIsPriority = PRIORITY_EXTENSIONS.some((ext) => b.path.endsWith(ext));
-
-    if (aIsPriority && !bIsPriority) return -1;
-    if (!aIsPriority && bIsPriority) return 1;
-
-    // Ambos mesma prioridade: mais recente primeiro
-    return new Date(b.modifiedAt).getTime() - new Date(a.modifiedAt).getTime();
-  });
-
-  // Filtra arquivos muito grandes (>50KB provavelmente sao gerados)
-  const readable = sorted.filter((f) => f.sizeBytes === 0 || f.sizeBytes <= MAX_FILE_SIZE_BYTES);
-
-  // Le o conteudo dos arquivos priorizados
-  const pathsToRead = readable.slice(0, 10).map((f) => f.path);
-  const contents = await readProjectFiles(projectPath, pathsToRead);
-
-  if (contents.length === 0) {
-    return "[Nenhum conteudo legivel nos arquivos alterados]";
-  }
-
-  // Monta o summary respeitando o limite de caracteres
-  const header = `## Arquivos alterados recentemente (${recentFiles.length} total)\n\n`;
-  let summary = header;
-  let currentLength = header.length;
-
-  for (const file of contents) {
-    // Caminho relativo ao projeto para facilitar leitura
-    const relativePath = file.path.replace(projectPath, "").replace(/^[/\\]/, "");
-    const block = `### ${relativePath}\n\`\`\`${file.language}\n${file.content}\n\`\`\`\n\n`;
-
-    if (currentLength + block.length > SUMMARY_MAX_CHARS) {
-      // Tenta incluir uma versao truncada do arquivo
-      const remaining = SUMMARY_MAX_CHARS - currentLength - 100;
-      if (remaining > 200) {
-        const truncatedContent = file.content.slice(0, remaining);
-        summary += `### ${relativePath}\n\`\`\`${file.language}\n${truncatedContent}\n// ... [truncado para caber no limite]\n\`\`\`\n\n`;
-      }
-      // Lista os arquivos restantes que nao couberam
-      const remainingFiles = contents
-        .slice(contents.indexOf(file) + 1)
-        .map((f) => f.path.replace(projectPath, "").replace(/^[/\\]/, ""));
-      if (remainingFiles.length > 0) {
-        summary += `_Arquivos adicionais nao incluidos: ${remainingFiles.join(", ")}_\n`;
-      }
-      break;
+    if (!response.ok) {
+      console.warn(`[ProjectFilesReader] /api/project/files retornou HTTP ${response.status}`);
+      return "";
     }
 
-    summary += block;
-    currentLength += block.length;
-  }
+    const data = await response.json() as {
+      files: Array<{ path: string; content: string; language: string }>;
+      error?: string;
+    };
 
-  return summary;
+    if (!data.files || data.files.length === 0) {
+      console.warn(`[ProjectFilesReader] Nenhum arquivo encontrado em ${projectPath}/src/`);
+      return "";
+    }
+
+    // Formata como blocos de codigo para injetar no prompt dos revisores
+    // Trunca arquivos grandes para caber no limite total
+    const MAX_PER_FILE = 2000; // chars por arquivo
+    let summary = "";
+    for (const file of data.files) {
+      const truncatedContent = file.content.length > MAX_PER_FILE
+        ? file.content.substring(0, MAX_PER_FILE) + "\n// ... [truncado]"
+        : file.content;
+      const block = `### ${file.path}\n\`\`\`${file.language}\n${truncatedContent}\n\`\`\`\n\n`;
+      if (summary.length + block.length > SUMMARY_MAX_CHARS) break;
+      summary += block;
+    }
+
+    console.log(`[ProjectFilesReader] ${data.files.length} arquivos lidos, ${summary.length} chars de summary`);
+    return summary;
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    console.error(`[ProjectFilesReader] Erro ao ler arquivos: ${msg}`);
+    return "";
+  }
 }

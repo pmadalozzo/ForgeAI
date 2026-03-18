@@ -33,6 +33,7 @@ const ROLE_TO_PHASE: Record<string, PhaseNumber> = {
   frontend: 3,
   backend: 3,
   database: 3,
+  designer: 4,
   qa: 4,
   security: 4,
   reviewer: 4,
@@ -53,8 +54,28 @@ interface ParsedSubtask {
 /** Roles validas para validacao */
 const VALID_ROLES: ReadonlySet<string> = new Set<string>([
   "orchestrator", "pm", "architect", "frontend", "backend",
-  "database", "qa", "security", "devops", "reviewer",
+  "database", "qa", "security", "devops", "reviewer", "designer",
 ]);
+
+/** Aliases de roles que o LLM pode gerar */
+const ROLE_ALIASES: Record<string, AgentRole> = {
+  "ui-ux": "designer",
+  "ux": "designer",
+  "ui": "designer",
+  "design": "designer",
+  "uiux": "designer",
+  "code-reviewer": "reviewer",
+  "code_reviewer": "reviewer",
+  "review": "reviewer",
+  "teste": "qa",
+  "test": "qa",
+  "seg": "security",
+  "infra": "devops",
+  "ops": "devops",
+  "db": "database",
+  "front": "frontend",
+  "back": "backend",
+};
 
 /** Prioridades validas */
 const VALID_PRIORITIES: ReadonlySet<string> = new Set([
@@ -91,7 +112,7 @@ export class LLMTaskDecomposer implements TaskDecomposer {
       messages: [
         { role: "user", content: description },
       ],
-      model: "",
+      model: "", // Gateway resolve via agentModelMap para "orchestrator"
       temperature: 0.3,
       maxTokens: 4096,
       systemPrompt,
@@ -160,7 +181,8 @@ O DevOps cria configuracoes de build e deploy:
 3. **assignedRole DEVE ser consistente com a fase** (veja mapeamento acima).
 4. **Descricoes DETALHADAS**: Cada tarefa deve explicar exatamente quais arquivos criar e o que cada um deve conter.
 5. **Stack padrao**: React 18 + TypeScript strict + Vite + Tailwind CSS. Imports relativos (nunca aliases).
-6. **Minimo 1 tarefa por fase**. Se o projeto nao precisa de database, crie ao menos uma tarefa de setup de tipos na Fase 3 com role backend.
+6. **RESPEITE as instrucoes do usuario**: Se o usuario pedir "sem backend" ou "dados mock", NAO crie tarefas para backend. Se pedir "sem database", NAO crie tarefas para database. Atribua a criação de dados mock/services ao frontend.
+7. **NAO force tarefas desnecessarias**: Só crie tarefas para roles que o projeto realmente precisa. Fases sem tarefas serao puladas automaticamente.
 
 Responda APENAS com um array JSON valido. Cada objeto deve ter:
 - "title": string (titulo curto da tarefa)
@@ -264,30 +286,84 @@ IMPORTANTE: Responda SOMENTE o array JSON, sem texto adicional, sem markdown cod
   private extractTasksFromText(content: string): ParsedSubtask[] {
     const lines = content.split("\n").map((l) => l.trim()).filter((l) => l.length > 0);
 
-    // Tenta extrair listas numeradas: "1. Titulo - descricao" ou "1) Titulo: descricao"
+    // Pattern para lista numerada com formato: "1. **Titulo** (role) — descricao"
+    const richPattern = /^\d+[.)]\s+\*\*(.+?)\*\*\s*(?:\((\w+)\))?\s*(?:[—:/-]\s*(.+))?$/;
+    // Pattern simples: "1. Titulo - descricao"
     const numberedPattern = /^\d+[.)]\s+(.+)/;
-    // Tenta extrair bullets: "- Titulo: descricao" ou "* Titulo"
+    // Bullets: "- Titulo: descricao"
     const bulletPattern = /^[-*]\s+(.+)/;
 
     const extracted: ParsedSubtask[] = [];
 
     for (const line of lines) {
+      // IGNORA linhas que indicam tarefas já concluídas (✅, ✓, "já existe", "já criado")
+      if (line.includes("✅") || line.includes("✓") || /j[aá]\s+(exist|cria|conclu|complet|pront)/i.test(line)) {
+        continue;
+      }
+      // IGNORA linhas que são status/resumo, não tarefas
+      if (line.startsWith("**Status") || line.startsWith("**✅") || line.startsWith("Como você")) {
+        continue;
+      }
+      // IGNORA linhas que são perguntas (não são tarefas reais)
+      if (/[?¿]/.test(line)) {
+        continue;
+      }
+      // IGNORA linhas conversacionais (o LLM respondeu com status/ofertas em vez de plano)
+      if (/^[-*]?\s*(Ajuda|Correção|Implementação|Testes|Rodar|Fazer|Me conte|O que|Ou algo|Você precisa|Como posso)/i.test(line)) {
+        continue;
+      }
+
+      // Tenta primeiro o pattern rico (com markdown bold e role entre parênteses)
+      const richMatch = line.match(richPattern);
+      if (richMatch) {
+        const title = (richMatch[1] ?? "").trim();
+        const explicitRole = richMatch[2]?.trim().toLowerCase();
+        const description = (richMatch[3] ?? title).trim();
+
+        // Usa role explícito se presente, senão infere
+        const resolvedRole = explicitRole ? (ROLE_ALIASES[explicitRole] ?? (VALID_ROLES.has(explicitRole) ? explicitRole : null)) : null;
+        const role = resolvedRole
+          ? resolvedRole as AgentRole
+          : this.inferRoleFromText(title + " " + description);
+        const phase = this.inferPhaseFromRole(role);
+
+        extracted.push({
+          title: title.substring(0, 100),
+          description: description.substring(0, 500),
+          assignedRole: role,
+          phase,
+          priority: phase <= 2 ? "critical" : "high",
+          dependencies: extracted.length > 0 ? [extracted[extracted.length - 1]!.title] : [],
+          estimatedMinutes: 15,
+        });
+        continue;
+      }
+
       const numberedMatch = line.match(numberedPattern);
       const bulletMatch = line.match(bulletPattern);
       const matchContent = numberedMatch?.[1] ?? bulletMatch?.[1];
 
       if (matchContent) {
-        // Tenta separar titulo de descricao por "—", ":", " - "
-        const separatorMatch = matchContent.match(/^(.+?)(?:\s*[—:]\s*|\s+-\s+)(.+)$/);
-        const title = separatorMatch ? (separatorMatch[1] ?? matchContent) : matchContent;
-        const description = separatorMatch ? (separatorMatch[2] ?? matchContent) : matchContent;
+        // Strip markdown bold
+        const cleaned = matchContent.replace(/\*\*/g, "");
 
-        // Infere o role a partir do conteudo
-        const role = this.inferRoleFromText(title + " " + description);
+        // Tenta separar titulo de descricao por "—", ":", " - "
+        const separatorMatch = cleaned.match(/^(.+?)(?:\s*[—:]\s*|\s+-\s+)(.+)$/);
+        const title = separatorMatch ? (separatorMatch[1] ?? cleaned) : cleaned;
+        const description = separatorMatch ? (separatorMatch[2] ?? cleaned) : cleaned;
+
+        // Checa se tem role explícito entre parênteses: "(architect)"
+        const roleInParens = title.match(/\((\w+)\)\s*$/);
+        const cleanTitle = title.replace(/\s*\(\w+\)\s*$/, "").trim();
+
+        const explicitRole = roleInParens?.[1]?.toLowerCase();
+        const role = (explicitRole && VALID_ROLES.has(explicitRole))
+          ? explicitRole as AgentRole
+          : this.inferRoleFromText(cleanTitle + " " + description);
         const phase = this.inferPhaseFromRole(role);
 
         extracted.push({
-          title: title.substring(0, 100),
+          title: cleanTitle.substring(0, 100),
           description: description.substring(0, 500),
           assignedRole: role,
           phase,
@@ -326,7 +402,12 @@ IMPORTANTE: Responda SOMENTE o array JSON, sem texto adicional, sem markdown cod
     if (lower.includes("frontend") || lower.includes("componente") || lower.includes("react") || lower.includes("ui") || lower.includes("pagina") || lower.includes("tela") || lower.includes("layout")) {
       return "frontend";
     }
-    if (lower.includes("backend") || lower.includes("api") || lower.includes("servidor") || lower.includes("servico") || lower.includes("endpoint")) {
+    if (lower.includes("backend") || lower.includes("servidor") || lower.includes("endpoint")) {
+      // Se mencionou "mock" junto com backend, é frontend que cria os mocks
+      if (lower.includes("mock")) return "frontend";
+      return "backend";
+    }
+    if ((lower.includes("api") || lower.includes("servico")) && !lower.includes("mock")) {
       return "backend";
     }
     if (lower.includes("banco") || lower.includes("database") || lower.includes("migration") || lower.includes("schema") || lower.includes("tabela")) {
@@ -342,13 +423,16 @@ IMPORTANTE: Responda SOMENTE o array JSON, sem texto adicional, sem markdown cod
     if (lower.includes("review") || lower.includes("revisao") || lower.includes("code review")) {
       return "reviewer";
     }
+    if (lower.includes("ui/ux") || lower.includes("ui ux") || lower.includes("design") || lower.includes("usabilidade") || lower.includes("acessibilidade")) {
+      return "designer";
+    }
     // Fase 5 — Delivery
     if (lower.includes("deploy") || lower.includes("docker") || lower.includes("ci/cd") || lower.includes("devops") || lower.includes("pipeline")) {
       return "devops";
     }
-    // Fallback para tipos/interfaces
+    // Tipos/interfaces/modelos → architect (define contratos), não backend
     if (lower.includes("tipo") || lower.includes("type") || lower.includes("interface") || lower.includes("modelo")) {
-      return "backend";
+      return "architect";
     }
 
     return "frontend";
@@ -412,15 +496,14 @@ IMPORTANTE: Responda SOMENTE o array JSON, sem texto adicional, sem markdown cod
    */
   private buildPipeline(subtasks: ParsedSubtask[]): DecomposedTask[] {
     // Gera IDs e monta mapa titulo → id
-    const timestamp = Date.now();
     const titleToId = new Map<string, string>();
     const taskEntries: Array<{ subtask: ParsedSubtask; id: string }> = [];
 
     // Ordena por fase para garantir IDs consistentes
     const sorted = [...subtasks].sort((a, b) => a.phase - b.phase);
 
-    sorted.forEach((subtask, index) => {
-      const id = `task_${timestamp}_${index}`;
+    sorted.forEach((subtask) => {
+      const id = crypto.randomUUID();
       titleToId.set(subtask.title, id);
       taskEntries.push({ subtask, id });
     });

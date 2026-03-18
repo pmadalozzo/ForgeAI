@@ -29,6 +29,7 @@ const STATUS_COLORS: Record<string, string> = {
 export function ProjectProgressBar() {
   const projects = useProjectStore((s) => s.projects);
   const activeProjectId = useProjectStore((s) => s.activeProjectId);
+  const currentPhase = useProjectStore((s) => s.currentPhase);
   const agents = useAgentsStore((s) => s.agents);
   const setAgentStatus = useAgentsStore((s) => s.setAgentStatus);
   const setAgentTask = useAgentsStore((s) => s.setAgentTask);
@@ -45,12 +46,19 @@ export function ProjectProgressBar() {
     const done = agents.filter((a) => a.status === AgentStatus.Done);
     const blocked = agents.filter((a) => a.status === AgentStatus.Blocked);
     const review = agents.filter((a) => a.status === AgentStatus.Review);
-    const total = agents.length;
     const active = working.length + review.length;
-    const completedCount = project?.completedTasks?.length ?? done.length;
-    const progress = project?.progress ?? (total > 0 ? Math.round((completedCount / Math.max(total, 1)) * 100) : 0);
 
-    return { working, done, blocked, review, total, active, progress };
+    // Progresso live ponderado (mesma fórmula do Supabase tasks-service)
+    const participating = working.length + done.length + blocked.length + review.length;
+    const liveProgress = participating > 0
+      ? Math.round(((done.length * 100 + review.length * 80 + working.length * 40) / (participating * 100)) * 100)
+      : 0;
+
+    // Usa o maior entre progresso persistido (Supabase) e live (agentes ativos)
+    const savedProgress = project?.progress ?? 0;
+    const progress = Math.max(savedProgress, liveProgress);
+
+    return { working, done, blocked, review, active, progress };
   }, [agents, project]);
 
   const handleStop = useCallback(async () => {
@@ -98,21 +106,41 @@ export function ProjectProgressBar() {
         <span style={{ color: "#e2e8f0", fontWeight: 700 }}>{project.name}</span>
       </div>
 
-      {/* Status badge */}
-      <span
-        style={{
-          color: statusColor,
-          background: `${statusColor}18`,
+      {/* Status badge OU Fase atual do pipeline */}
+      {currentPhase ? (
+        <div style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 4,
+          color: "#F59E0B",
+          fontSize: 10,
+          fontWeight: 700,
+          background: "#F59E0B12",
           padding: "2px 8px",
           borderRadius: 4,
-          fontWeight: 600,
-          fontSize: 10,
-          textTransform: "uppercase",
-          letterSpacing: 0.5,
-        }}
-      >
-        {statusLabel}
-      </span>
+          border: "1px solid #F59E0B30",
+        }}>
+          <span style={{ fontSize: 11 }}>
+            {currentPhase.phase === 0 ? "🎯" : currentPhase.phase === 1 ? "📋" : currentPhase.phase === 2 ? "🏗️" : currentPhase.phase === 3 ? "💻" : currentPhase.phase === 4 ? "🛡️" : "📦"}
+          </span>
+          {currentPhase.phase === 0 ? currentPhase.name : `Fase ${currentPhase.phase}/5 — ${currentPhase.name}`}
+        </div>
+      ) : (
+        <span
+          style={{
+            color: statusColor,
+            background: `${statusColor}18`,
+            padding: "2px 8px",
+            borderRadius: 4,
+            fontWeight: 600,
+            fontSize: 10,
+            textTransform: "uppercase",
+            letterSpacing: 0.5,
+          }}
+        >
+          {statusLabel}
+        </span>
+      )}
 
       {/* Agentes ativos */}
       <div style={{ display: "flex", alignItems: "center", gap: 8, color: "#64748b" }}>

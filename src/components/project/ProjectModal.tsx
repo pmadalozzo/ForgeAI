@@ -461,8 +461,13 @@ function ProjectList({ projects, confirmDeleteId, onSelect, onDelete, onConfirmD
         const isPaused = proj.status === "paused";
         const isDone = proj.status === "done";
 
+        // Ação principal: seleciona o projeto e fecha o modal (sem injetar mensagem)
+        const handleSelectAndClose = () => {
+          onSelect(proj.id);
+        };
+
         // Texto e cor do botão principal
-        const primaryLabel = isDone ? "Ver" : isActive ? "Continuar" : isPaused ? "Retomar" : "Iniciar";
+        const primaryLabel = isDone ? "Abrir" : isActive ? "Abrir" : isPaused ? "Retomar" : "Iniciar";
         const primaryGradient = isDone
           ? "linear-gradient(135deg, #64748b, #475569)"
           : isActive
@@ -470,7 +475,7 @@ function ProjectList({ projects, confirmDeleteId, onSelect, onDelete, onConfirmD
             : isPaused
               ? "linear-gradient(135deg, #F59E0B, #D97706)"
               : "linear-gradient(135deg, #3B82F6, #2563EB)";
-        const primaryAction = isActive ? () => onContinue(proj.id) : () => onStart(proj.id);
+        const primaryAction = (isActive || isDone) ? handleSelectAndClose : () => onStart(proj.id);
 
         return (
           <div
@@ -579,25 +584,48 @@ function ProjectList({ projects, confirmDeleteId, onSelect, onDelete, onConfirmD
               }}
               onClick={(e) => e.stopPropagation()}
             >
-              {/* Botão principal */}
-              <button
-                type="button"
-                onClick={primaryAction}
-                style={{
-                  padding: "6px 18px",
-                  fontSize: 11,
-                  fontWeight: 700,
-                  fontFamily: "inherit",
-                  color: "#fff",
-                  background: primaryGradient,
-                  border: "none",
-                  borderRadius: 6,
-                  cursor: "pointer",
-                  letterSpacing: 0.3,
-                }}
-              >
-                {primaryLabel}
-              </button>
+              {/* Botões de ação */}
+              <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                <button
+                  type="button"
+                  onClick={primaryAction}
+                  style={{
+                    padding: "6px 18px",
+                    fontSize: 11,
+                    fontWeight: 700,
+                    fontFamily: "inherit",
+                    color: "#fff",
+                    background: primaryGradient,
+                    border: "none",
+                    borderRadius: 6,
+                    cursor: "pointer",
+                    letterSpacing: 0.3,
+                  }}
+                >
+                  {primaryLabel}
+                </button>
+                {/* Botão "Continuar" — retoma tasks pendentes automaticamente */}
+                {isActive && (
+                  <button
+                    type="button"
+                    onClick={() => onContinue(proj.id)}
+                    style={{
+                      padding: "6px 14px",
+                      fontSize: 11,
+                      fontWeight: 700,
+                      fontFamily: "inherit",
+                      color: "#10B981",
+                      background: "none",
+                      border: "1px solid #10B98140",
+                      borderRadius: 6,
+                      cursor: "pointer",
+                      letterSpacing: 0.3,
+                    }}
+                  >
+                    Continuar
+                  </button>
+                )}
+              </div>
 
               {/* Botões utilitários — ícones */}
               <div style={{ display: "flex", gap: 6, alignItems: "center" }}>

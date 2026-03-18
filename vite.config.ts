@@ -110,12 +110,28 @@ function forgeApiPlugin(): Plugin {
           const args = body.args ?? [];
           const cwd = body.cwd ?? undefined;
 
+          // Diagnóstico: mostra CWD recebido do browser
+          if (!cwd) {
+            console.warn(`[forge-api] ⚠️ CWD NÃO RECEBIDO — agente vai rodar sem diretório de projeto`);
+          }
+
           const startMs = Date.now();
-          console.log(`[forge-api] claude ${args.slice(0, 4).join(" ")}... (cwd: ${cwd ?? "default"})`);
+          // Mostra args relevantes (oculta conteúdo longo de -p e --system-prompt)
+          const logArgs = args.map((a, i) => {
+            const prev = i > 0 ? args[i - 1] : "";
+            if (prev === "-p" || prev === "--system-prompt" || prev === "--append-system-prompt") {
+              return a.length > 60 ? a.substring(0, 60) + `...(${a.length}ch)` : a;
+            }
+            return a;
+          });
+          console.log(`[forge-api] claude ${logArgs.join(" ")} (cwd: ${cwd ?? "default"})`);
 
           const procId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
           const result = await new Promise<{ success: boolean; stdout: string; stderr: string; exitCode: number }>((resolve) => {
+            // shell: false — passa args diretamente ao processo sem interpretação do shell.
+            // Com shell: true no Windows, argumentos com newlines/aspas/chars especiais
+            // são corrompidos, fazendo o CLI receber prompts vazios e responder "empty message".
             const proc = spawn("claude", args, {
               stdio: ["ignore", "pipe", "pipe"],
               env: { ...process.env },
@@ -143,14 +159,20 @@ function forgeApiPlugin(): Plugin {
             proc.on("close", (code) => {
               clearTimeout(timer);
               activeProcesses.delete(procId);
-              console.log(`[forge-api] claude finalizado (${code}) em ${Date.now() - startMs}ms — stdout: ${stdout.length} chars`);
+              const elapsed = Date.now() - startMs;
+              console.log(`[forge-api] claude finalizado (code=${code}) em ${elapsed}ms — stdout: ${stdout.length} chars, stderr: ${stderr.length} chars`);
+              if (code !== 0) {
+                console.log(`[forge-api] ERRO stdout: ${stdout.slice(0, 500)}`);
+                console.log(`[forge-api] ERRO stderr: ${stderr.slice(0, 500)}`);
+              }
               resolve({ success: code === 0, stdout, stderr, exitCode: code ?? -1 });
             });
 
             proc.on("error", (err) => {
               clearTimeout(timer);
               activeProcesses.delete(procId);
-              resolve({ success: false, stdout: "", stderr: err.message, exitCode: -1 });
+              console.error(`[forge-api] spawn error: ${err.message} (code: ${(err as NodeJS.ErrnoException).code ?? "?"})`);
+              resolve({ success: false, stdout: "", stderr: `spawn error: ${err.message}`, exitCode: -1 });
             });
           });
 
@@ -230,6 +252,139 @@ function forgeApiPlugin(): Plugin {
         } catch (err) {
           console.error(`[forge-api] Erro ao ler skill ${role}:`, err);
           json(res, { content: null });
+        }
+      });
+
+      // ── POST /api/project/files ────────────────────────────────────────
+      // Lê arquivos do projeto diretamente (sem CLI). Usado por reviewers.
+      server.middlewares.use("/api/project/files", async (req, res) => {
+        if (req.method !== "POST") { json(res, { error: "Use POST" }, 405); return; }
+
+        try {
+          const body = JSON.parse(await readBody(req)) as { projectPath?: string; maxFiles?: number };
+          const projectPath = body.projectPath;
+          if (!projectPath) { json(res, { error: "projectPath required" }, 400); return; }
+
+          const srcPath = path.join(projectPath, "src");
+          if (!fs.existsSync(srcPath)) { json(res, { files: [], error: "src/ not found" }); return; }
+
+          const validExts = new Set([".ts", ".tsx", ".js", ".jsx", ".css", ".html"]);
+          const ignoreDirs = new Set(["node_modules", "dist", ".git", "build", "coverage"]);
+          const maxFiles = body.maxFiles ?? 10;
+          const maxFileSize = 50_000;
+          const results: Array<{ path: string; content: string; language: string }> = [];
+
+          function walkDir(dir: string): void {
+            if (results.length >= maxFiles) return;
+            let entries: fs.Dirent[];
+            try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
+
+            for (const entry of entries) {
+              if (results.length >= maxFiles) return;
+              if (ignoreDirs.has(entry.name)) continue;
+
+              const fullPath = path.join(dir, entry.name);
+              if (entry.isDirectory()) {
+                walkDir(fullPath);
+              } else if (entry.isFile()) {
+                const ext = path.extname(entry.name).toLowerCase();
+                if (!validExts.has(ext)) continue;
+                try {
+                  const stat = fs.statSync(fullPath);
+                  if (stat.size > maxFileSize) continue;
+                  const content = fs.readFileSync(fullPath, "utf-8");
+                  const relPath = path.relative(projectPath, fullPath).replace(/\\/g, "/");
+                  const langMap: Record<string, string> = { ".ts": "typescript", ".tsx": "tsx", ".js": "javascript", ".jsx": "jsx", ".css": "css", ".html": "html" };
+                  results.push({ path: relPath, content, language: langMap[ext] ?? "plaintext" });
+                } catch { /* skip unreadable */ }
+              }
+            }
+          }
+
+          walkDir(srcPath);
+          console.log(`[forge-api] project/files: ${results.length} arquivos lidos de ${srcPath}`);
+          json(res, { files: results });
+        } catch (err) {
+          json(res, { files: [], error: String(err) });
+        }
+      });
+
+      // ── POST /api/claude/messages ─────────────────────────────────────
+      // Chama a API Anthropic Messages diretamente (server-side, sem CORS).
+      // Usado para o Orchestrator que precisa de system prompt puro (sem CLI built-in).
+      server.middlewares.use("/api/claude/messages", async (req, res) => {
+        if (req.method !== "POST") { json(res, { error: "Use POST" }, 405); return; }
+
+        try {
+          const body = JSON.parse(await readBody(req)) as {
+            model?: string;
+            max_tokens?: number;
+            system?: string;
+            messages?: Array<{ role: string; content: string }>;
+            temperature?: number;
+          };
+
+          // Busca API key: body > env > OAuth token
+          let apiKey = process.env.ANTHROPIC_API_KEY ?? "";
+          let authHeader = "";
+
+          if (apiKey) {
+            authHeader = `x-api-key:${apiKey}`;
+          } else {
+            // Tenta OAuth do Claude CLI
+            const credPath = path.join(os.homedir(), ".claude", ".credentials.json");
+            if (fs.existsSync(credPath)) {
+              const creds = JSON.parse(fs.readFileSync(credPath, "utf-8")) as Record<string, unknown>;
+              const oauth = creds.claudeAiOauth as Record<string, unknown> | undefined;
+              if (oauth?.accessToken) {
+                apiKey = String(oauth.accessToken);
+                authHeader = `bearer:${apiKey}`;
+              }
+            }
+          }
+
+          if (!apiKey) {
+            json(res, { error: "Sem API key ou OAuth token. Configure nas settings ou execute 'claude' no terminal." }, 401);
+            return;
+          }
+
+          const headers: Record<string, string> = {
+            "content-type": "application/json",
+            "anthropic-version": "2023-06-01",
+          };
+
+          if (authHeader.startsWith("x-api-key:")) {
+            headers["x-api-key"] = authHeader.replace("x-api-key:", "");
+          } else {
+            headers["authorization"] = `Bearer ${apiKey}`;
+          }
+
+          console.log(`[forge-api] API Messages: model=${body.model}, messages=${body.messages?.length ?? 0}, system=${(body.system ?? "").length} chars`);
+
+          const apiRes = await fetch("https://api.anthropic.com/v1/messages", {
+            method: "POST",
+            headers,
+            body: JSON.stringify({
+              model: body.model ?? "claude-sonnet-4-20250514",
+              max_tokens: body.max_tokens ?? 4096,
+              system: body.system ?? undefined,
+              messages: body.messages ?? [],
+              temperature: body.temperature ?? 0.7,
+            }),
+          });
+
+          if (!apiRes.ok) {
+            const errText = await apiRes.text();
+            console.error(`[forge-api] API erro ${apiRes.status}:`, errText.substring(0, 300));
+            json(res, { error: `API ${apiRes.status}: ${errText.substring(0, 200)}` }, apiRes.status);
+            return;
+          }
+
+          const result = await apiRes.json();
+          json(res, result);
+        } catch (err) {
+          console.error("[forge-api] API Messages erro:", err);
+          json(res, { error: String(err) }, 500);
         }
       });
 

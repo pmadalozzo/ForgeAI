@@ -7,16 +7,33 @@ import { create } from "zustand";
 import { devtools } from "zustand/middleware";
 import type { Project } from "@/types/agents";
 
+/** Informação da fase atual do pipeline */
+export interface PipelinePhaseInfo {
+  /** Número da fase (1-5) */
+  phase: number;
+  /** Nome da fase */
+  name: string;
+  /** Total de tarefas na fase */
+  totalTasks: number;
+  /** Tarefas concluídas na fase */
+  completedTasks: number;
+}
+
 interface ProjectState {
   projects: Project[];
   activeProjectId: string | null;
   loaded: boolean;
+  /** Fase atual do pipeline em execução (null se inativo) */
+  currentPhase: PipelinePhaseInfo | null;
 
   /** Retorna o projeto ativo */
   getProject: () => Project | null;
 
   /** Seleciona um projeto como ativo */
   setActiveProject: (projectId: string | null) => void;
+
+  /** Atualiza a fase atual do pipeline */
+  setCurrentPhase: (phase: PipelinePhaseInfo | null) => void;
 
   // --- Ações internas (chamadas pelo hook useProjects) ---
   _setProjects: (projects: Project[]) => void;
@@ -32,6 +49,7 @@ export const useProjectStore = create<ProjectState>()(
       projects: [],
       activeProjectId: null,
       loaded: false,
+      currentPhase: null,
 
       getProject: () => {
         const { activeProjectId, projects } = get();
@@ -40,7 +58,10 @@ export const useProjectStore = create<ProjectState>()(
       },
 
       setActiveProject: (projectId) =>
-        set({ activeProjectId: projectId }, false, "setActiveProject"),
+        set({ activeProjectId: projectId, currentPhase: null }, false, "setActiveProject"),
+
+      setCurrentPhase: (phase) =>
+        set({ currentPhase: phase }, false, "setCurrentPhase"),
 
       _setProjects: (projects) =>
         set({ projects, loaded: true }, false, "_setProjects"),

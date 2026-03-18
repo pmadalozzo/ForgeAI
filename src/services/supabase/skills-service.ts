@@ -216,6 +216,12 @@ const DEFAULT_SKILL_CONTENT: Record<string, { name: string; description: string;
     content: "",
     tags: ["code-review", "qualidade", "refactoring", "performance"],
   },
+  designer: {
+    name: "UI/UX Designer",
+    description: "Revisa e melhora interfaces, pesquisa referências de grandes players.",
+    content: "",
+    tags: ["design", "ui", "ux", "layout", "responsivo", "design-system"],
+  },
 };
 
 /** Sincroniza SKILL.md dos arquivos locais para o Supabase (upsert por agent_role) */

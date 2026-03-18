@@ -890,8 +890,8 @@ ${allTasksSummary}
       return "approved";
     }
 
-    // Roles de review que vamos rodar em paralelo
-    const reviewRoles: AgentRole[] = ["reviewer", "qa", "security"];
+    // Roles de review que vamos rodar em paralelo (inclui designer para revisão de UI)
+    const reviewRoles: AgentRole[] = ["reviewer", "qa", "security", "designer"];
 
     // Filtra: não revisa a si mesmo (se um reviewer tiver task na Fase 4, pula)
     const phase4Roles = new Set(
@@ -1084,6 +1084,24 @@ REGRAS:
       security: "Voce e o Security Engineer. Identifique vulnerabilidades e implemente correcoes diretas no codigo.",
       devops: "Voce e o DevOps Engineer. Configure CI/CD, Docker e deployment com arquivos completos.",
       reviewer: "Voce e o Code Reviewer. Revise codigo e aplique correcoes diretamente quando encontrar problemas.",
+      designer: `Voce e o UI/UX Designer do ForgeAI. Seu trabalho e revisar e melhorar a interface criada pelo Frontend Dev.
+
+RESPONSABILIDADES:
+1. Analisar o layout e componentes criados pelo Frontend
+2. Pesquisar como grandes players (Stripe, Linear, Vercel, Notion, Figma) resolvem problemas similares de UI
+3. Sugerir melhorias de UX: hierarquia visual, espacamento, tipografia, cores, feedback visual
+4. Verificar responsividade e acessibilidade
+5. Reescrever componentes com layout profissional quando necessario
+
+REGRAS:
+- Use Tailwind CSS — NUNCA CSS inline
+- Design system: espacamento consistente (4, 8, 12, 16, 24, 32, 48px)
+- Tipografia: hierarquia clara (h1 > h2 > body > caption)
+- Cores: paleta escura do projeto (#0c1322 fundo), contraste WCAG AA
+- Animacoes sutis com Framer Motion (hover, transicoes de pagina)
+- Mobile-first: 320px → 768px → 1024px → 1440px
+- Componentes reutilizaveis: Button, Input, Card, Modal, Badge, Toast
+- Patterns de referencia: dashboards do Linear, forms do Stripe, navegacao do Notion`,
     };
 
     return `${rolePrompts[role]}${projectCtx}${projectMemCtx}${devMemCtx}${baseInstructions}`;

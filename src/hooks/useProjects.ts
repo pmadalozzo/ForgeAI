@@ -51,7 +51,7 @@ const LOCAL_TO_DB_STATUS: Record<string, ProjectStatus> = {
 
 const DEFAULT_AGENT_IDS = [
   "orchestrator", "pm", "architect", "frontend", "backend",
-  "database", "qa", "security", "devops", "reviewer",
+  "database", "qa", "security", "devops", "reviewer", "designer",
 ];
 
 function rowToProject(row: ProjectRow): Project {

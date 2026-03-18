@@ -128,7 +128,7 @@ const agentesIniciais: Agent[] = [
     provider: "claude-code",
     linesWritten: 0,
     desk: {
-      position: { x: 130, y: 480 },
+      position: { x: 100, y: 480 },
       items: ["pilha-papeis"],
       zone: "qa-ops",
     },
@@ -145,7 +145,7 @@ const agentesIniciais: Agent[] = [
     provider: "claude-code",
     linesWritten: 0,
     desk: {
-      position: { x: 330, y: 480 },
+      position: { x: 260, y: 480 },
       items: ["caneca-cafe"],
       zone: "qa-ops",
     },
@@ -162,7 +162,7 @@ const agentesIniciais: Agent[] = [
     provider: "claude-code",
     linesWritten: 0,
     desk: {
-      position: { x: 530, y: 480 },
+      position: { x: 420, y: 480 },
       items: ["monitor-extra", "caneca-cafe"],
       zone: "qa-ops",
     },
@@ -179,7 +179,7 @@ const agentesIniciais: Agent[] = [
     provider: "claude-code",
     linesWritten: 0,
     desk: {
-      position: { x: 730, y: 480 },
+      position: { x: 580, y: 480 },
       items: ["vaso-planta", "post-its"],
       zone: "qa-ops",
     },
@@ -196,8 +196,8 @@ const agentesIniciais: Agent[] = [
     provider: "claude-code",
     linesWritten: 0,
     desk: {
-      position: { x: 130, y: 480 },
-      items: ["tablet-desenho", "paleta-cores"],
+      position: { x: 740, y: 480 },
+      items: ["post-its", "caneca-cafe"],
       zone: "qa-ops",
     },
   },

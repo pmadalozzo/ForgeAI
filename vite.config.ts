@@ -12,6 +12,9 @@ import { chromium } from "playwright";
 /** Map de processos Claude ativos, chave = timestamp de criação */
 const activeProcesses = new Map<string, ChildProcess>();
 
+/** Último dev server de screenshot (para matar antes de iniciar outro) */
+let lastScreenshotProc: ChildProcess | null = null;
+
 /**
  * Plugin Vite que expõe todos os endpoints backend necessários.
  * Tudo roda dentro do processo do Vite — basta `npm run dev`.
@@ -330,6 +333,32 @@ function forgeApiPlugin(): Plugin {
         }
       });
 
+      // ── POST /api/project/ensure-dir ──────────────────────────────────
+      // Cria pasta de trabalho para projetos tipo "texto" que não têm localPath.
+      // Retorna o caminho absoluto da pasta criada.
+      server.middlewares.use("/api/project/ensure-dir", async (req, res) => {
+        if (req.method !== "POST") { json(res, { error: "Use POST" }, 405); return; }
+
+        try {
+          const body = JSON.parse(await readBody(req)) as { projectName?: string; projectId?: string };
+          const safeName = (body.projectName ?? "projeto")
+            .toLowerCase()
+            .replace(/[^a-z0-9_-]/g, "-")
+            .replace(/-+/g, "-")
+            .substring(0, 50);
+
+          const baseDir = path.join(os.homedir(), "ForgeAI-Projects");
+          const projectDir = path.join(baseDir, `${safeName}-${(body.projectId ?? Date.now().toString()).substring(0, 8)}`);
+
+          fs.mkdirSync(projectDir, { recursive: true });
+          console.log(`[forge-api] ensure-dir: criado ${projectDir}`);
+          json(res, { success: true, path: projectDir });
+        } catch (err) {
+          console.error("[forge-api] ensure-dir erro:", err);
+          json(res, { success: false, error: String(err instanceof Error ? err.message : err) });
+        }
+      });
+
       // ── POST /api/project/screenshot ──────────────────────────────────
       // Inicia dev server do projeto, captura screenshot com Playwright, retorna caminho.
       // Usado pelo Designer agent para análise visual da interface renderizada.
@@ -357,14 +386,37 @@ function forgeApiPlugin(): Plugin {
           const height = body.height ?? 800;
           const port = 5200 + Math.floor(Math.random() * 700); // 5200-5900
 
+          // Mata dev server anterior se ainda estiver rodando
+          if (lastScreenshotProc?.pid) {
+            console.log(`[forge-api] screenshot: matando dev server anterior (PID ${lastScreenshotProc.pid})`);
+            try {
+              execSync(`taskkill /pid ${lastScreenshotProc.pid} /T /F 2>nul`, { windowsHide: true });
+            } catch {
+              try { lastScreenshotProc.kill(); } catch { /* ignore */ }
+            }
+            lastScreenshotProc = null;
+          }
+
+          // Mata qualquer processo na porta alvo (pode ter ficado órfão)
+          try {
+            execSync(`for /f "tokens=5" %a in ('netstat -aon ^| findstr :${port} ^| findstr LISTENING') do taskkill /pid %a /T /F 2>nul`, { shell: "cmd.exe", windowsHide: true });
+          } catch { /* nenhum processo na porta */ }
+
           console.log(`[forge-api] screenshot: iniciando dev server na porta ${port} (${projectPath})`);
 
-          // Inicia dev server do projeto
+          // Inicia dev server do projeto (shell: true necessário no Windows para npx.cmd)
           devProc = spawn("npx", ["vite", "--port", port.toString()], {
             cwd: projectPath,
             stdio: ["ignore", "pipe", "pipe"],
             env: { ...process.env },
+            shell: true,
             windowsHide: true,
+          });
+          lastScreenshotProc = devProc;
+
+          // Handler de erro do spawn (evita crash por unhandled 'error')
+          devProc.on("error", (err) => {
+            console.error("[forge-api] screenshot: spawn error:", err.message);
           });
 
           // Aguarda o server ficar pronto (detecta URL no stdout)
@@ -372,9 +424,16 @@ function forgeApiPlugin(): Plugin {
             const timeout = setTimeout(() => reject(new Error("Dev server timeout (30s)")), 30_000);
             let output = "";
 
+            devProc!.on("error", (err) => {
+              clearTimeout(timeout);
+              reject(new Error(`Spawn falhou: ${err.message}`));
+            });
+
             devProc!.stdout?.on("data", (chunk: Buffer) => {
               output += chunk.toString();
-              const urlMatch = output.match(/Local:\s+(http:\/\/localhost:\d+)/);
+              // Strip ANSI codes antes de parsear (Vite emite cores no stdout)
+              const clean = output.replace(/\x1b\[[0-9;]*m/g, "");
+              const urlMatch = clean.match(/Local:\s+(http:\/\/localhost:\d+)/);
               if (urlMatch) {
                 clearTimeout(timeout);
                 resolve(urlMatch[1]!);
@@ -402,7 +461,10 @@ function forgeApiPlugin(): Plugin {
           await page.goto(serverUrl, { waitUntil: "networkidle", timeout: 15_000 });
           await page.waitForTimeout(1500); // animações
 
-          const screenshotPath = path.join(os.tmpdir(), `forgeai-screenshot-${Date.now()}.png`);
+          // Salva screenshot dentro do projeto (pasta .forgeai/) para fácil acesso
+          const screenshotDir = path.join(projectPath, ".forgeai");
+          fs.mkdirSync(screenshotDir, { recursive: true });
+          const screenshotPath = path.join(screenshotDir, `screenshot-${Date.now()}.png`);
           await page.screenshot({ path: screenshotPath, fullPage: true });
           await browser.close();
 
@@ -415,6 +477,7 @@ function forgeApiPlugin(): Plugin {
             }
           } catch { devProc.kill(); }
           devProc = null;
+          lastScreenshotProc = null;
 
           json(res, { success: true, screenshotPath });
         } catch (err) {

@@ -29,6 +29,7 @@ interface ProjectRow {
   created_by: string;
   progress: number;
   total_cost: number;
+  research_enabled: boolean;
   created_at: string;
   updated_at: string;
 }
@@ -51,7 +52,7 @@ const LOCAL_TO_DB_STATUS: Record<string, ProjectStatus> = {
 
 const DEFAULT_AGENT_IDS = [
   "orchestrator", "pm", "architect", "frontend", "backend",
-  "database", "qa", "security", "devops", "reviewer", "designer",
+  "database", "qa", "security", "devops", "reviewer", "designer", "researcher",
 ];
 
 function rowToProject(row: ProjectRow): Project {
@@ -69,6 +70,8 @@ function rowToProject(row: ProjectRow): Project {
     completedTasks: [],
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+    researchEnabled: row.research_enabled ?? false,
+    researchReport: null,
   };
 }
 
@@ -80,6 +83,7 @@ export interface CreateProjectInput {
   sourceType: "text" | "local" | "git";
   sourcePath: string | null;
   gitBranch: string | null;
+  researchEnabled?: boolean;
 }
 
 export interface UpdateProjectInput {
@@ -165,6 +169,7 @@ export function useProjects() {
         source_url: sourceUrl,
         git_branch: input.gitBranch,
         created_by: userId,
+        research_enabled: input.researchEnabled ?? false,
       })
       .select()
       .single();

@@ -729,6 +729,7 @@ function NewProjectForm({ onCreated, createProject }: NewProjectFormProps) {
   const [gitBranch, setGitBranch] = useState("");
   const [gitToken, setGitToken] = useState("");
   const [showTokenField, setShowTokenField] = useState(false);
+  const [researchEnabled, setResearchEnabled] = useState(false);
 
   // Device Flow state
   const [deviceFlow, setDeviceFlow] = useState<DeviceFlowResponse | null>(null);
@@ -770,8 +771,9 @@ function NewProjectForm({ onCreated, createProject }: NewProjectFormProps) {
       sourceType,
       sourcePath,
       gitBranch: branch,
+      researchEnabled,
     }).then(() => onCreated());
-  }, [canSubmit, name, description, sourceType, localPath, gitUrl, gitBranch, createProject, onCreated]);
+  }, [canSubmit, name, description, sourceType, localPath, gitUrl, gitBranch, researchEnabled, createProject, onCreated]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "Enter" && e.ctrlKey && canSubmit) {
@@ -1140,6 +1142,56 @@ function NewProjectForm({ onCreated, createProject }: NewProjectFormProps) {
           </div>
         </div>
       )}
+
+      {/* Toggle Pesquisa */}
+      <div
+        style={{
+          marginBottom: 16,
+          display: "flex",
+          alignItems: "center",
+          gap: 12,
+          padding: "12px 14px",
+          background: researchEnabled ? "rgba(168,85,247,0.08)" : "#0c1322",
+          border: `1px solid ${researchEnabled ? "#A855F7" : "#1e293b"}`,
+          borderRadius: 10,
+          cursor: "pointer",
+          transition: "border-color 0.2s, background 0.2s",
+        }}
+        onClick={() => setResearchEnabled((v) => !v)}
+      >
+        <div
+          style={{
+            width: 36,
+            height: 20,
+            borderRadius: 10,
+            background: researchEnabled ? "#A855F7" : "#334155",
+            position: "relative",
+            transition: "background 0.2s",
+            flexShrink: 0,
+          }}
+        >
+          <div
+            style={{
+              width: 16,
+              height: 16,
+              borderRadius: "50%",
+              background: "#fff",
+              position: "absolute",
+              top: 2,
+              left: researchEnabled ? 18 : 2,
+              transition: "left 0.2s",
+            }}
+          />
+        </div>
+        <div>
+          <div style={{ fontSize: 12, fontWeight: 700, color: researchEnabled ? "#e2e8f0" : "#94a3b8" }}>
+            Iniciar com Pesquisa
+          </div>
+          <div style={{ fontSize: 10, color: "#64748b", lineHeight: 1.4, marginTop: 2 }}>
+            O Pesquisador busca dados da empresa/cliente na web antes de iniciar o projeto
+          </div>
+        </div>
+      </div>
 
       {/* Submit */}
       <button

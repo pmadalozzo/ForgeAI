@@ -34,6 +34,7 @@ const DEFAULT_AGENTS: Array<{ role: string; provider: string; model: string }> =
   { role: "security", provider: "claude-code", model: "claude-sonnet-4-20250514" },
   { role: "devops", provider: "claude-code", model: "claude-sonnet-4-20250514" },
   { role: "reviewer", provider: "claude-code", model: "claude-sonnet-4-20250514" },
+  { role: "researcher", provider: "claude-code", model: "claude-sonnet-4-20250514" },
 ];
 
 export async function fetchAgentConfigs(projectId: string): Promise<AgentConfigRow[]> {

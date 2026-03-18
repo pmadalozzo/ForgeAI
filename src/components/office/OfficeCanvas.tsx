@@ -1,7 +1,7 @@
 /**
  * Canvas SVG principal do escritorio virtual 2D.
- * Renderiza piso, zonas, estacoes de trabalho, agentes, walkers,
- * e suporta zoom/pan, hotkeys, tooltips, context menu, drag & drop.
+ * Visual estilo SoWork/Gather.town: piso escuro com triangulos,
+ * salas com carpete claro, paredes 3D de madeira, janelas com cenario externo.
  */
 import { useCallback, useState, useRef, useEffect } from "react";
 import { useAgentsStore } from "@/stores/agents-store";
@@ -13,7 +13,7 @@ import { AgentStatus } from "@/types/agents";
 
 /** Dimensoes do canvas SVG */
 const CANVAS_W = 920;
-const CANVAS_H = 600;
+const CANVAS_H = 900;
 
 /** Limites de zoom */
 const MIN_SCALE = 0.5;
@@ -23,28 +23,40 @@ const ZOOM_STEP = 0.1;
 /** Configuracao das zonas do escritorio */
 const ZONES = [
   {
+    label: "RESEARCH",
+    x: 50,
+    y: 75,
+    w: 830,
+    h: 140,
+    color: "#A855F7",
+    carpet: "#C4A86C",
+  },
+  {
     label: "MANAGEMENT",
     x: 50,
-    y: 50,
+    y: 265,
     w: 830,
-    h: 155,
+    h: 140,
     color: "#3B82F6",
+    carpet: "#D4A855",
   },
   {
     label: "DEVELOPMENT",
     x: 50,
-    y: 235,
+    y: 455,
     w: 830,
-    h: 155,
+    h: 140,
     color: "#10B981",
+    carpet: "#C9B07A",
   },
   {
     label: "QA & SECURITY",
     x: 50,
-    y: 420,
+    y: 645,
     w: 830,
     h: 155,
     color: "#EF4444",
+    carpet: "#BFA76E",
   },
 ] as const;
 
@@ -69,6 +81,39 @@ interface DragState {
   startY: number;
   origDeskX: number;
   origDeskY: number;
+}
+
+/** Parede 3D com face superior e frontal */
+function Wall3D({
+  x,
+  y,
+  w,
+  h,
+  topH = 5,
+}: {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  topH?: number;
+}) {
+  return (
+    <g>
+      {/* Face frontal (mais escura) */}
+      <rect x={x} y={y + topH} width={w} height={h - topH} fill="#5A3A1A" />
+      {/* Face superior (mais clara, simula topo da parede) */}
+      <rect x={x} y={y} width={w} height={topH} fill="#8B6914" />
+      {/* Borda de detalhe */}
+      <line
+        x1={x}
+        y1={y + topH}
+        x2={x + w}
+        y2={y + topH}
+        stroke="#4A2E12"
+        strokeWidth="0.5"
+      />
+    </g>
+  );
 }
 
 export function OfficeCanvas() {
@@ -149,7 +194,7 @@ export function OfficeCanvas() {
   /** Handler de selecao de agente */
   const handleSelectAgent = useCallback(
     (agentId: string) => {
-      if (drag) return; // Nao selecionar durante drag
+      if (drag) return;
       selectAgent(selectedAgentId === agentId ? null : agentId);
     },
     [selectedAgentId, selectAgent, drag],
@@ -168,7 +213,6 @@ export function OfficeCanvas() {
   /** Inicio do pan */
   const handleMouseDown = useCallback(
     (e: React.MouseEvent<SVGSVGElement>) => {
-      // Botao esquerdo = pan (se nao clicou num agente)
       if (e.button === 0 && !drag) {
         setIsPanning(true);
         panStartRef.current = {
@@ -191,7 +235,6 @@ export function OfficeCanvas() {
         const svg = svgRef.current;
         if (!svg) return;
         const rect = svg.getBoundingClientRect();
-        // Converte pixels de tela para unidades SVG
         const svgDx = (dx / rect.width) * CANVAS_W;
         const svgDy = (dy / rect.height) * CANVAS_H;
         setTranslateX(panStartRef.current.tx + svgDx);
@@ -279,14 +322,12 @@ export function OfficeCanvas() {
   /** Hotkeys */
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      // Ignora se foco esta em input/textarea
       const tag = (e.target as HTMLElement).tagName;
       if (tag === "INPUT" || tag === "TEXTAREA") return;
 
       switch (e.key) {
         case " ": {
           e.preventDefault();
-          // Toggle todos os agentes entre idle e working
           const store = useAgentsStore.getState();
           const allIdle = store.agents.every((a) => a.status === AgentStatus.Idle);
           const newStatus = allIdle ? AgentStatus.Working : AgentStatus.Idle;
@@ -297,7 +338,6 @@ export function OfficeCanvas() {
         }
         case "r":
         case "R": {
-          // Reset agente selecionado
           const store = useAgentsStore.getState();
           if (store.selectedAgentId) {
             setAgentStatus(store.selectedAgentId, AgentStatus.Idle);
@@ -371,7 +411,10 @@ export function OfficeCanvas() {
   return (
     <div
       className="flex flex-1 items-center justify-center overflow-hidden"
-      style={{ padding: 6, position: "relative" }}
+      style={{
+        padding: 6,
+        position: "relative",
+      }}
       onWheel={handleWheel}
     >
       <svg
@@ -382,7 +425,8 @@ export function OfficeCanvas() {
           width: "100%",
           height: "100%",
           borderRadius: 10,
-          border: "1px solid #1e293b",
+          border: "none",
+          background: "#1a1a1a",
           cursor: isPanning ? "grabbing" : drag ? "grabbing" : "grab",
         }}
         onMouseDown={handleMouseDown}
@@ -392,17 +436,29 @@ export function OfficeCanvas() {
         onContextMenu={handleContextMenu}
       >
         <defs>
-          {/* Padrao de piso */}
+          {/* Piso escuro com padrao de triangulos geometricos */}
           <pattern
-            id="floor"
-            width="20"
-            height="20"
+            id="darkFloorTriangles"
+            width="24"
+            height="24"
             patternUnits="userSpaceOnUse"
           >
-            <rect width="20" height="20" fill="#0c1322" />
-            <rect width="10" height="10" fill="#0e1526" />
-            <rect x="10" y="10" width="10" height="10" fill="#0e1526" />
+            <rect width="24" height="24" fill="#2E2E2E" />
+            {/* Triangulos alternados criando textura chevron */}
+            <polygon points="0,0 12,0 6,12" fill="#333333" />
+            <polygon points="12,0 24,0 18,12" fill="#363636" />
+            <polygon points="6,12 18,12 12,24" fill="#333333" />
+            <polygon points="0,24 6,12 12,24" fill="#2A2A2A" />
+            <polygon points="12,24 18,12 24,24" fill="#2A2A2A" />
+            {/* Linhas sutis entre triangulos */}
+            <line x1="0" y1="0" x2="6" y2="12" stroke="#252525" strokeWidth="0.3" />
+            <line x1="12" y1="0" x2="6" y2="12" stroke="#252525" strokeWidth="0.3" />
+            <line x1="12" y1="0" x2="18" y2="12" stroke="#252525" strokeWidth="0.3" />
+            <line x1="24" y1="0" x2="18" y2="12" stroke="#252525" strokeWidth="0.3" />
+            <line x1="6" y1="12" x2="12" y2="24" stroke="#252525" strokeWidth="0.3" />
+            <line x1="18" y1="12" x2="12" y2="24" stroke="#252525" strokeWidth="0.3" />
           </pattern>
+
           {/* Filtro de brilho */}
           <filter id="glow">
             <feGaussianBlur stdDeviation="2" />
@@ -411,55 +467,395 @@ export function OfficeCanvas() {
               <feMergeNode in="SourceGraphic" />
             </feMerge>
           </filter>
-          {/* Gradiente de lampada */}
-          <radialGradient id="lampGlow" cx="50%" cy="0%" r="80%">
-            <stop offset="0%" stopColor="#fbbf24" stopOpacity="0.06" />
-            <stop offset="100%" stopColor="#fbbf24" stopOpacity="0" />
+
+          {/* Sombra suave para moveis */}
+          <filter id="softShadow" x="-10%" y="-10%" width="120%" height="120%">
+            <feDropShadow dx="1" dy="2" stdDeviation="3" floodColor="#000000" floodOpacity="0.4" />
+          </filter>
+
+          {/* Brilho quente de lampada */}
+          <radialGradient id="warmLight" cx="50%" cy="50%" r="50%">
+            <stop offset="0%" stopColor="#fbbf24" stopOpacity="0.08" />
+            <stop offset="60%" stopColor="#f59e0b" stopOpacity="0.03" />
+            <stop offset="100%" stopColor="#f59e0b" stopOpacity="0" />
+          </radialGradient>
+
+          {/* Gradiente do ceu externo (sunset) */}
+          <linearGradient id="skyGradient" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor="#1e1b4b" />
+            <stop offset="25%" stopColor="#312e81" />
+            <stop offset="50%" stopColor="#7c3aed" />
+            <stop offset="75%" stopColor="#c084fc" />
+            <stop offset="90%" stopColor="#f472b6" />
+            <stop offset="100%" stopColor="#fb923c" />
+          </linearGradient>
+
+          {/* Gradiente para vidro das janelas */}
+          <linearGradient id="glassSheen" x1="0" y1="0" x2="1" y2="0">
+            <stop offset="0%" stopColor="#ffffff" stopOpacity="0.08" />
+            <stop offset="50%" stopColor="#ffffff" stopOpacity="0.02" />
+            <stop offset="100%" stopColor="#ffffff" stopOpacity="0.06" />
+          </linearGradient>
+
+          {/* Brilho da lareira */}
+          <radialGradient id="fireplaceGlow" cx="50%" cy="80%" r="60%">
+            <stop offset="0%" stopColor="#f97316" stopOpacity="0.15" />
+            <stop offset="60%" stopColor="#ea580c" stopOpacity="0.05" />
+            <stop offset="100%" stopColor="#ea580c" stopOpacity="0" />
           </radialGradient>
         </defs>
 
         {/* Grupo transformavel (zoom/pan) */}
         <g transform={`translate(${translateX}, ${translateY}) scale(${scale})`}>
-          {/* Piso */}
-          <rect width={CANVAS_W} height={CANVAS_H} fill="url(#floor)" />
 
-          {/* Zonas com labels e brilho de lampada */}
-          {ZONES.map((zone) => (
-            <g key={zone.label}>
-              <rect
-                x={zone.x}
-                y={zone.y}
-                width={zone.w}
-                height={zone.h}
-                rx="8"
-                fill={zone.color}
-                fillOpacity="0.02"
-                stroke={zone.color}
-                strokeOpacity="0.1"
-                strokeWidth="1"
-                strokeDasharray="4 4"
+          {/* ═══ PISO ESCURO DO CORREDOR (fundo inteiro) ═══ */}
+          <rect width={CANVAS_W} height={CANVAS_H} fill="url(#darkFloorTriangles)" />
+
+          {/* ═══ JANELAS / PAREDE EXTERNA DIREITA ═══ */}
+          <g>
+            {/* Ceu externo visivel pela janela */}
+            <rect x={CANVAS_W - 30} y={0} width={30} height={CANVAS_H} fill="url(#skyGradient)" />
+
+            {/* Montanhas distantes */}
+            <polygon points={`${CANVAS_W - 30},${CANVAS_H * 0.7} ${CANVAS_W - 20},${CANVAS_H * 0.5} ${CANVAS_W - 5},${CANVAS_H * 0.65} ${CANVAS_W},${CANVAS_H * 0.7}`} fill="#1e1b4b" opacity="0.6" />
+            <polygon points={`${CANVAS_W - 30},${CANVAS_H * 0.72} ${CANVAS_W - 15},${CANVAS_H * 0.55} ${CANVAS_W},${CANVAS_H * 0.68} ${CANVAS_W},${CANVAS_H * 0.72}`} fill="#312e81" opacity="0.4" />
+
+            {/* Silhuetas de pinheiros */}
+            {[0.75, 0.78, 0.82, 0.76, 0.80, 0.84, 0.77, 0.81].map((yPct, i) => {
+              const treeX = CANVAS_W - 28 + i * 3.5;
+              const treeTop = CANVAS_H * (yPct - 0.08 - (i % 3) * 0.02);
+              const treeBase = CANVAS_H * yPct;
+              return (
+                <polygon
+                  key={`tree-${i}`}
+                  points={`${treeX},${treeBase} ${treeX + 1.5},${treeTop} ${treeX + 3},${treeBase}`}
+                  fill="#0a3622"
+                  opacity={0.7 + (i % 3) * 0.1}
+                />
+              );
+            })}
+
+            {/* Paineis de vidro com moldura de madeira */}
+            {ZONES.map((zone, i) => {
+              const glassY = zone.y;
+              const glassH = zone.h;
+              return (
+                <g key={`window-${i}`}>
+                  {/* Moldura de madeira */}
+                  <rect
+                    x={CANVAS_W - 32}
+                    y={glassY - 2}
+                    width={4}
+                    height={glassH + 4}
+                    fill="#6B4226"
+                  />
+                  {/* Vidro */}
+                  <rect
+                    x={CANVAS_W - 28}
+                    y={glassY}
+                    width={26}
+                    height={glassH}
+                    fill="url(#glassSheen)"
+                    stroke="#6B4226"
+                    strokeWidth="1.5"
+                  />
+                  {/* Divisores verticais do vidro */}
+                  <line
+                    x1={CANVAS_W - 15}
+                    y1={glassY}
+                    x2={CANVAS_W - 15}
+                    y2={glassY + glassH}
+                    stroke="#6B4226"
+                    strokeWidth="1"
+                  />
+                  {/* Divisor horizontal */}
+                  <line
+                    x1={CANVAS_W - 28}
+                    y1={glassY + glassH / 2}
+                    x2={CANVAS_W - 2}
+                    y2={glassY + glassH / 2}
+                    stroke="#6B4226"
+                    strokeWidth="1"
+                  />
+                  {/* Reflexo sutil no vidro */}
+                  <rect
+                    x={CANVAS_W - 26}
+                    y={glassY + 3}
+                    width={4}
+                    height={glassH - 6}
+                    fill="#ffffff"
+                    opacity="0.04"
+                    rx="1"
+                  />
+                </g>
+              );
+            })}
+          </g>
+
+          {/* ═══ SALAS DO ESCRITORIO ═══ */}
+          {ZONES.map((zone, i) => {
+            const wallThickness = 16;
+            const wallTopH = 5;
+            const doorW = 54;
+            const doorX = zone.x + zone.w / 2 - doorW / 2;
+
+            return (
+              <g key={zone.label}>
+                {/* ── Carpete da sala (claro, contraste com corredor escuro) ── */}
+                <rect
+                  x={zone.x}
+                  y={zone.y}
+                  width={zone.w}
+                  height={zone.h}
+                  fill={zone.carpet}
+                  rx="1"
+                />
+                {/* Textura sutil no carpete */}
+                <rect
+                  x={zone.x}
+                  y={zone.y}
+                  width={zone.w}
+                  height={zone.h}
+                  fill="#000000"
+                  opacity="0.04"
+                  rx="1"
+                />
+                {/* Borda interna do carpete (contorno sutil) */}
+                <rect
+                  x={zone.x + 4}
+                  y={zone.y + 4}
+                  width={zone.w - 8}
+                  height={zone.h - 8}
+                  fill="none"
+                  stroke={zone.carpet}
+                  strokeWidth="0.5"
+                  strokeOpacity="0.3"
+                  rx="1"
+                />
+
+                {/* ── Parede traseira 3D (topo da sala) ── */}
+                <Wall3D
+                  x={zone.x - 8}
+                  y={zone.y - wallThickness}
+                  w={zone.w + 16}
+                  h={wallThickness}
+                  topH={wallTopH}
+                />
+
+                {/* ── Parede esquerda 3D ── */}
+                <Wall3D
+                  x={zone.x - 8}
+                  y={zone.y - wallThickness}
+                  w={8}
+                  h={zone.h + wallThickness}
+                  topH={wallTopH}
+                />
+
+                {/* ── Quadros na parede traseira ── */}
+                {/* Quadro 1 — arte/logo */}
+                <rect
+                  x={zone.x + 25}
+                  y={zone.y - wallThickness + 3}
+                  width="20"
+                  height="10"
+                  rx="1"
+                  fill="#2a1f0e"
+                  stroke="#8B6914"
+                  strokeWidth="1.5"
+                />
+                <rect
+                  x={zone.x + 27}
+                  y={zone.y - wallThickness + 5}
+                  width="16"
+                  height="6"
+                  rx="0.5"
+                  fill={zone.color}
+                  fillOpacity="0.25"
+                />
+
+                {/* Quadro 2 — whiteboard */}
+                <rect
+                  x={zone.x + zone.w - 55}
+                  y={zone.y - wallThickness + 2}
+                  width="26"
+                  height="12"
+                  rx="1"
+                  fill="#f5f5f0"
+                  stroke="#8B6914"
+                  strokeWidth="1.2"
+                />
+                {/* Mini barras no quadro */}
+                {[0, 1, 2, 3, 4].map((j) => (
+                  <rect
+                    key={j}
+                    x={zone.x + zone.w - 51 + j * 4.5}
+                    y={zone.y - wallThickness + 9 - (j % 3) * 2}
+                    width="3"
+                    height={3 + (j % 3) * 2}
+                    rx="0.5"
+                    fill={zone.color}
+                    opacity={0.5 + j * 0.1}
+                  />
+                ))}
+
+                {/* ── Placa do departamento ── */}
+                <rect
+                  x={zone.x + zone.w / 2 - (zone.label.length * 4 + 12)}
+                  y={zone.y - wallThickness + 3}
+                  width={zone.label.length * 8 + 24}
+                  height="11"
+                  rx="3"
+                  fill="#1a1a1a"
+                  fillOpacity="0.7"
+                  stroke={zone.color}
+                  strokeWidth="1.5"
+                  strokeOpacity="0.8"
+                />
+                <text
+                  x={zone.x + zone.w / 2}
+                  y={zone.y - wallThickness + 11}
+                  textAnchor="middle"
+                  fontSize="7"
+                  fill={zone.color}
+                  fontFamily="monospace"
+                  fontWeight="800"
+                  letterSpacing="2"
+                >
+                  {zone.label}
+                </text>
+
+                {/* ── Luz quente ambiente ── */}
+                <ellipse
+                  cx={zone.x + zone.w / 2}
+                  cy={zone.y + zone.h / 2}
+                  rx={zone.w * 0.3}
+                  ry={zone.h * 0.35}
+                  fill="url(#warmLight)"
+                />
+
+                {/* ── Parede inferior / divisoria entre salas ── */}
+                {i < ZONES.length - 1 && (
+                  <g>
+                    {/* Parede inferior esquerda */}
+                    <Wall3D
+                      x={zone.x - 8}
+                      y={zone.y + zone.h}
+                      w={doorX - zone.x + 8}
+                      h={wallThickness}
+                      topH={wallTopH}
+                    />
+                    {/* Parede inferior direita */}
+                    <Wall3D
+                      x={doorX + doorW}
+                      y={zone.y + zone.h}
+                      w={zone.x + zone.w + 8 - doorX - doorW}
+                      h={wallThickness}
+                      topH={wallTopH}
+                    />
+
+                    {/* Porta / abertura — piso do corredor visivel */}
+                    <rect
+                      x={doorX}
+                      y={zone.y + zone.h}
+                      width={doorW}
+                      height={wallThickness}
+                      fill="#2E2E2E"
+                    />
+                    {/* Triangulos no piso do corredor */}
+                    <polygon
+                      points={`${doorX},${zone.y + zone.h} ${doorX + doorW / 2},${zone.y + zone.h + wallThickness} ${doorX + doorW},${zone.y + zone.h}`}
+                      fill="#333333"
+                      opacity="0.5"
+                    />
+
+                    {/* Pilares da porta */}
+                    <rect
+                      x={doorX - 2}
+                      y={zone.y + zone.h}
+                      width={3}
+                      height={wallThickness}
+                      fill="#8B6914"
+                    />
+                    <rect
+                      x={doorX + doorW - 1}
+                      y={zone.y + zone.h}
+                      width={3}
+                      height={wallThickness}
+                      fill="#8B6914"
+                    />
+                  </g>
+                )}
+
+                {/* ── Estante com livros (canto esquerdo) ── */}
+                <g transform={`translate(${zone.x + 6}, ${zone.y + 8})`}>
+                  {/* Corpo da estante */}
+                  <rect x="0" y="0" width="14" height="35" rx="1" fill="#3D2B1F" stroke="#2A1B10" strokeWidth="0.5" />
+                  {/* Prateleiras */}
+                  {[0, 1, 2, 3].map((s) => (
+                    <rect key={s} x="1" y={3 + s * 8} width="12" height="1" fill="#5A3A1A" />
+                  ))}
+                  {/* Livros coloridos */}
+                  {[0, 1, 2, 3].map((s) => (
+                    <g key={`books-${s}`}>
+                      <rect x="2" y={s * 8 + 0.5} width="2.5" height="6" rx="0.3" fill="#e74c3c" opacity="0.85" />
+                      <rect x="5" y={s * 8 + 1} width="2" height="5.5" rx="0.3" fill="#3498db" opacity="0.85" />
+                      <rect x="7.5" y={s * 8 + 0.5} width="1.8" height="6" rx="0.3" fill="#2ecc71" opacity="0.85" />
+                      <rect x="10" y={s * 8 + 1.5} width="2" height="5" rx="0.3" fill="#f39c12" opacity="0.8" />
+                    </g>
+                  ))}
+                </g>
+
+                {/* ── Planta grande (canto direito) ── */}
+                <g transform={`translate(${zone.x + zone.w - 28}, ${zone.y + zone.h - 40})`}>
+                  {/* Vaso de terracota */}
+                  <path d="M4,22 L2,35 L18,35 L16,22 Z" fill="#8B4513" />
+                  <rect x="2" y="21" width="16" height="3" rx="1" fill="#A0522D" />
+                  {/* Folhagem rica */}
+                  <ellipse cx="10" cy="16" rx="10" ry="8" fill="#228B22" opacity="0.85" />
+                  <ellipse cx="5" cy="12" rx="7" ry="6" fill="#2E8B57" opacity="0.75" />
+                  <ellipse cx="15" cy="13" rx="8" ry="7" fill="#006400" opacity="0.7" />
+                  <ellipse cx="10" cy="8" rx="6" ry="5" fill="#32CD32" opacity="0.6" />
+                  {/* Detalhe de folhas */}
+                  <path d="M6,10 Q3,5 8,6" fill="none" stroke="#1a6b1a" strokeWidth="0.8" opacity="0.5" />
+                  <path d="M14,11 Q17,6 12,7" fill="none" stroke="#1a6b1a" strokeWidth="0.8" opacity="0.5" />
+                </g>
+              </g>
+            );
+          })}
+
+          {/* ── Parede inferior da ultima sala ── */}
+          {(() => {
+            const last = ZONES[ZONES.length - 1]!;
+            return (
+              <Wall3D
+                x={last.x - 8}
+                y={last.y + last.h}
+                w={last.w + 16}
+                h={16}
+                topH={5}
               />
-              <text
-                x={zone.x + 8}
-                y={zone.y + 14}
-                fontSize="8"
-                fill={zone.color}
-                opacity="0.35"
-                fontFamily="monospace"
-                fontWeight="800"
-                letterSpacing="2"
-              >
-                {zone.label}
-              </text>
-              <ellipse
-                cx={zone.x + zone.w / 2}
-                cy={zone.y}
-                rx={zone.w * 0.4}
-                ry={zone.h * 0.5}
-                fill="url(#lampGlow)"
-              />
-            </g>
-          ))}
+            );
+          })()}
+
+          {/* ═══ LAREIRA (entre Management e Development, parede esquerda) ═══ */}
+          <g transform={`translate(${ZONES[1].x - 6}, ${ZONES[1].y + ZONES[1].h - 10})`}>
+            {/* Estrutura da lareira */}
+            <rect x="-4" y="-8" width="28" height="4" rx="1" fill="#5A3A1A" />
+            <rect x="-2" y="-4" width="24" height="20" rx="1" fill="#3D2B1F" />
+            <rect x="1" y="-1" width="18" height="15" rx="1" fill="#1a0a00" />
+            {/* Fogo animado */}
+            <ellipse cx="10" cy="10" rx="6" ry="4" fill="#f97316" opacity="0.7">
+              <animate attributeName="ry" values="4;5;3.5;4" dur="1.5s" repeatCount="indefinite" />
+            </ellipse>
+            <ellipse cx="10" cy="9" rx="4" ry="3" fill="#fbbf24" opacity="0.6">
+              <animate attributeName="ry" values="3;4;2.5;3" dur="1.2s" repeatCount="indefinite" />
+            </ellipse>
+            <ellipse cx="10" cy="8" rx="2" ry="2" fill="#fef3c7" opacity="0.5">
+              <animate attributeName="ry" values="2;2.5;1.5;2" dur="1s" repeatCount="indefinite" />
+            </ellipse>
+            {/* Brilho da lareira no chao */}
+            <ellipse cx="10" cy="20" rx="25" ry="15" fill="url(#fireplaceGlow)" />
+          </g>
 
           {/* Decoracoes do escritorio */}
           <OfficeDecorations />
@@ -514,11 +910,12 @@ export function OfficeCanvas() {
                 y="0"
                 width="120"
                 height="36"
-                rx="4"
-                fill="#0f172a"
+                rx="6"
+                fill="#1a1a2e"
                 stroke={tooltipAgent.color}
-                strokeWidth="0.7"
+                strokeWidth="1"
                 opacity="0.95"
+                filter="url(#softShadow)"
               />
               <text
                 x="6"
@@ -543,7 +940,7 @@ export function OfficeCanvas() {
                 x="6"
                 y="31"
                 fontSize="5.5"
-                fill="#64748b"
+                fill="#6b7280"
                 fontFamily="monospace"
               >
                 {tooltipAgent.currentTask

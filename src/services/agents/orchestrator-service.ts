@@ -32,12 +32,14 @@ interface AgentTaskExecution {
   agentId: string;
   role: AgentRole;
   description: string;
-  /** Fase do pipeline (1-5) */
-  phase: 1 | 2 | 3 | 4 | 5;
+  /** Fase do pipeline (0-5) */
+  phase: 0 | 1 | 2 | 3 | 4 | 5;
 }
 
 /** Mapa de outputs acumulados entre fases */
 interface PhaseOutputs {
+  /** Output do Researcher — injetado na Fase 1+ */
+  research: string;
   /** Output do PM (PRD) — injetado na Fase 2 */
   prd: string;
   /** Output do Architect — injetado na Fase 3 */
@@ -49,11 +51,12 @@ interface PhaseOutputs {
 /** Roles conhecidas para pré-carregar skills */
 const ALL_ROLES: AgentRole[] = [
   "orchestrator", "pm", "architect", "frontend", "backend",
-  "database", "qa", "security", "devops", "reviewer", "designer",
+  "database", "qa", "security", "devops", "reviewer", "designer", "researcher",
 ];
 
 /** Nomes legíveis das fases */
 const PHASE_NAMES: Record<number, string> = {
+  0: "RESEARCH",
   1: "PLANNING",
   2: "ARCHITECTURE",
   3: "DEVELOPMENT",
@@ -133,6 +136,12 @@ class OrchestratorServiceImpl {
       // Sincroniza providers e agentes (podem ter mudado)
       this.syncProviders();
       this.syncAgents();
+
+      // Garante que o projeto tem um diretório de trabalho (cria se necessário)
+      await this.ensureProjectDir(projectId);
+
+      // Carrega custo acumulado de sessões anteriores
+      await this.loadBaseCost(projectId);
 
       // Verifica se há tasks pendentes de uma sessão anterior (retomada pós-queda)
       const pendingTasks = await loadPendingTasks(projectId);
@@ -303,6 +312,27 @@ class OrchestratorServiceImpl {
         decomposingId,
         `Decompus em **${tasks.length} tarefa(s)**:\n\n${taskSummary}\n\nDistribuindo para os agentes...`,
       );
+
+      // Se pesquisa está habilitada, prepend task de Phase 0
+      const project = await this.getProjectContext();
+      if (project?.researchEnabled) {
+        const researchTask: DecomposedTask = {
+          id: crypto.randomUUID(),
+          description: this.buildResearchPrompt(project.name, project.description),
+          targetRole: "researcher" as AgentRole,
+          priority: "critical",
+          dependencies: [],
+          estimatedMinutes: 10,
+          phase: 0,
+          metadata: {
+            title: "Pesquisa de mercado",
+            phase: "0",
+            phaseName: "RESEARCH",
+            originalDependencies: "",
+          },
+        };
+        tasks.unshift(researchTask);
+      }
 
       // Executa cada tarefa com o LLM do agente correspondente (em fases)
       const executions = this.buildExecutions(tasks, projectId);
@@ -512,8 +542,9 @@ class OrchestratorServiceImpl {
    * Infere a fase do pipeline a partir do role do agente.
    * Usado na retomada de tasks pendentes que não têm fase explícita.
    */
-  private inferPhaseFromRole(role: AgentRole): 1 | 2 | 3 | 4 | 5 {
+  private inferPhaseFromRole(role: AgentRole): 0 | 1 | 2 | 3 | 4 | 5 {
     switch (role) {
+      case "researcher": return 0;
       case "pm": return 1;
       case "architect": return 2;
       case "frontend":
@@ -560,6 +591,7 @@ class OrchestratorServiceImpl {
 
     // Acumula outputs entre fases
     const phaseOutputs: PhaseOutputs = {
+      research: "",
       prd: "",
       architecture: "",
       changedFilesSummary: "",
@@ -687,7 +719,10 @@ class OrchestratorServiceImpl {
       }
 
       // Coleta outputs da fase para passar como contexto para a próxima
-      if (phaseNum === 1) {
+      if (phaseNum === 0) {
+        const researchOutput = phaseResults.get("researcher") ?? "";
+        phaseOutputs.research = researchOutput.startsWith("[Erro") ? "" : researchOutput;
+      } else if (phaseNum === 1) {
         const prdOutput = phaseResults.get("pm") ?? "";
         phaseOutputs.prd = prdOutput.startsWith("[Erro") ? "" : prdOutput;
       } else if (phaseNum === 2) {
@@ -753,6 +788,11 @@ ${allTasksSummary}
 - Use imports relativos para arquivos que outros agentes vao criar
 - Se precisa de um tipo/interface de outro agente, defina localmente ou importe de src/types/
 `;
+
+    // Injeta Pesquisa de Mercado (disponível a partir da Fase 1)
+    if (phaseNum >= 1 && phaseOutputs.research.length > 0) {
+      context += `\n## Pesquisa de Mercado\n${phaseOutputs.research.substring(0, 4000)}\n`;
+    }
 
     // Injeta PRD do PM (disponível a partir da Fase 2)
     if (phaseNum >= 2 && phaseOutputs.prd.length > 0) {
@@ -925,6 +965,9 @@ ${allTasksSummary}
               progress: realProgress,
             });
           }
+
+          // Sincroniza custo total no Supabase
+          await this.syncCostToSupabase(activeId);
         }
       }
 
@@ -1342,23 +1385,45 @@ ${codeToReview.substring(0, 6000)}`,
         taskId: crypto.randomUUID(),
         agentId: designerAgent.id,
         role: "designer",
-        description: `Revise a interface criada pelo Frontend Dev. Analise:
-- Layout e hierarquia visual
-- Consistência de cores e tipografia
-- Responsividade
-- Acessibilidade (a11y)
-- UX (fluxo do usuário, feedback visual, estados de loading/erro/vazio)
+        description: `IMPORTANTE: Voce e um REVISOR. NAO modifique nenhum arquivo. NAO use Write ou Edit. Apenas ANALISE e produza um relatorio.
 
-Se tiver problemas, liste as correções necessárias para o Frontend aplicar.
-Se estiver tudo OK, responda APROVADO.
+## CHECKLIST OBRIGATÓRIO (avalie cada item com APROVADO ou REPROVADO):
+
+1. **Hierarquia Visual**: Títulos, subtítulos e corpo têm tamanhos e pesos distintos? H1 > H2 > body
+2. **Espaçamento**: Padding e margin consistentes (múltiplos de 4/8px)? Sem elementos colados?
+3. **Cores**: Contraste WCAG AA (4.5:1 texto, 3:1 elementos grandes)? Paleta coerente?
+4. **Responsividade**: Layout funciona em mobile (320px)? Breakpoints corretos?
+5. **Componentes**: Botões têm hover/active/disabled states? Inputs têm focus ring?
+6. **Feedback Visual**: Loading states, empty states, error states existem?
+7. **Alinhamento**: Elementos alinhados em grid? Sem desalinhamentos visuais?
+8. **Tipografia**: Uma família consistente? Line-height adequado (1.4-1.6 para texto)?
+
+## FORMATO DA RESPOSTA:
+
+Se QUALQUER item falhar, responda EXATAMENTE neste formato:
+REPROVADO:
+1. [arquivo.tsx] Problema: descricao. Correcao: o que o Frontend deve fazer
+2. [arquivo.tsx] Problema: descricao. Correcao: o que o Frontend deve fazer
+...
+
+Se TODOS os 8 itens passarem, responda APENAS: APROVADO
+
+REGRAS:
+- NAO escreva codigo. NAO crie arquivos. NAO modifique nada.
+- Cada correcao deve ser uma INSTRUCAO para o Frontend Dev executar
+- Seja EXIGENTE. Compare com Stripe, Linear, Vercel
 ${screenshotInstruction}
---- CÓDIGO DA INTERFACE ---
+--- CÓDIGO DA INTERFACE (somente leitura) ---
 ${codeToReview.substring(0, 6000)}`,
         phase: 3,
       };
 
       const output = await this.executeAgentTask(designerExec, settings, projectId);
-      const approved = !output.toUpperCase().includes("REPROVADO") && !output.toUpperCase().includes("CORREÇÕES");
+      const upper = output.toUpperCase();
+      // Só aprova se explicitamente disse APROVADO e NÃO mencionou reprovação
+      const hasApproval = upper.includes("APROVADO") && !upper.includes("REPROVADO");
+      const hasCorrections = upper.includes("REPROVADO") || upper.includes("CORREÇÕES") || upper.includes("CORRIGIR") || upper.includes("PROBLEMA");
+      const approved = hasApproval && !hasCorrections;
 
       if (approved) {
         useChatStore.getState().addMessage(designerAgent.id, "Interface APROVADA pelo Designer.");
@@ -1367,26 +1432,84 @@ ${codeToReview.substring(0, 6000)}`,
         return "approved";
       }
 
-      // Designer reprovou — manda frontend corrigir
+      // Designer reprovou — manda o FRONTEND corrigir (Designer NUNCA escreve código)
       useChatStore.getState().addMessage(
         "orchestrator",
-        "Designer solicitou correções no Frontend. Enviando feedback...",
+        "Designer **reprovou** a interface. Enviando correções para o **Frontend** implementar...",
       );
+
+      // Walker visual: Designer → Frontend (entregando relatório)
+      eventBus.publish(EventType.AGENT_WALKING, {
+        agentId: `walk-designer-fix-${Date.now()}`,
+        fromAgentId: designerAgent.id,
+        toAgentId: "frontend",
+        label: "Correções UI/UX",
+        waypoints: [],
+        timestamp: new Date().toISOString(),
+      });
 
       const frontendAgent = agentStore.agents.find((a) => a.role === "frontend");
       if (frontendAgent) {
+        agentStore.setAgentStatus(designerAgent.id, AgentStatus.Review);
+        agentStore.setAgentTask(designerAgent.id, "Aguardando Frontend corrigir...");
+
         const fixExec: AgentTaskExecution = {
           taskId: crypto.randomUUID(),
           agentId: frontendAgent.id,
           role: "frontend",
-          description: `O Designer revisou sua interface e pediu as seguintes correções. Aplique TODAS:\n\n${output}`,
+          description: `O Designer UI/UX revisou sua interface e REPROVOU. Aplique TODAS as correções abaixo:\n\n${output}\n\nIMPORTANTE: Implemente CADA correção listada. Não pule nenhuma.`,
           phase: 3,
         };
         await this.executeAgentTask(fixExec, settings, projectId);
+
+        // Re-revisão: Designer analisa se o Frontend corrigiu
+        useChatStore.getState().addMessage(
+          "orchestrator",
+          "Frontend aplicou correções. **Designer** re-revisando...",
+        );
+
+        // Walker visual: Frontend → Designer (devolvendo trabalho)
+        eventBus.publish(EventType.AGENT_WALKING, {
+          agentId: `walk-frontend-rereview-${Date.now()}`,
+          fromAgentId: "frontend",
+          toAgentId: designerAgent.id,
+          label: "Re-revisão UI",
+          waypoints: [],
+          timestamp: new Date().toISOString(),
+        });
+
+        // Relê os arquivos atualizados
+        let updatedCode = "";
+        if (project?.localPath) {
+          try {
+            updatedCode = await getChangedFilesSummary(project.localPath);
+          } catch { /* usa vazio */ }
+        }
+
+        if (updatedCode.length > 0) {
+          const reReviewExec: AgentTaskExecution = {
+            taskId: crypto.randomUUID(),
+            agentId: designerAgent.id,
+            role: "designer",
+            description: `Re-revisão: O Frontend aplicou as correções que você pediu. Verifique se TODAS foram implementadas corretamente.
+NAO modifique arquivos. Apenas responda APROVADO ou REPROVADO com itens pendentes.
+
+--- CÓDIGO ATUALIZADO (somente leitura) ---
+${updatedCode.substring(0, 6000)}`,
+            phase: 3,
+          };
+          const reReviewOutput = await this.executeAgentTask(reReviewExec, settings, projectId);
+          const reUpper = reReviewOutput.toUpperCase();
+          if (reUpper.includes("APROVADO") && !reUpper.includes("REPROVADO")) {
+            useChatStore.getState().addMessage(designerAgent.id, "Interface APROVADA pelo Designer após correções.");
+          } else {
+            useChatStore.getState().addMessage(designerAgent.id, "Designer ainda encontrou pendências, mas o pipeline continua.");
+          }
+        }
       }
 
       agentStore.setAgentStatus(designerAgent.id, AgentStatus.Done);
-      agentStore.setAgentTask(designerAgent.id, "Correções aplicadas");
+      agentStore.setAgentTask(designerAgent.id, "Revisão concluída");
       return "needs_changes";
 
     } catch (error) {
@@ -1465,24 +1588,33 @@ REGRAS:
       security: "Voce e o Security Engineer. Identifique vulnerabilidades e implemente correcoes diretas no codigo.",
       devops: "Voce e o DevOps Engineer. Configure CI/CD, Docker e deployment com arquivos completos.",
       reviewer: "Voce e o Code Reviewer. Revise codigo e aplique correcoes diretamente quando encontrar problemas.",
-      designer: `Voce e o UI/UX Designer do ForgeAI. Seu trabalho e revisar e melhorar a interface criada pelo Frontend Dev.
+      designer: `Voce e o UI/UX Designer SENIOR do ForgeAI. Voce e um ANALISTA DE QUALIDADE VISUAL — voce NUNCA escreve ou modifica codigo.
 
-RESPONSABILIDADES:
-1. Analisar o layout e componentes criados pelo Frontend
-2. Pesquisar como grandes players (Stripe, Linear, Vercel, Notion, Figma) resolvem problemas similares de UI
-3. Sugerir melhorias de UX: hierarquia visual, espacamento, tipografia, cores, feedback visual
-4. Verificar responsividade e acessibilidade
-5. Reescrever componentes com layout profissional quando necessario
+## SEU PAPEL:
+Voce e como um Diretor de Arte que revisa o trabalho do Frontend Dev. Voce analisa, avalia e lista problemas. O Frontend Dev e quem implementa as correcoes.
 
-REGRAS:
-- Use Tailwind CSS — NUNCA CSS inline
-- Design system: espacamento consistente (4, 8, 12, 16, 24, 32, 48px)
-- Tipografia: hierarquia clara (h1 > h2 > body > caption)
-- Cores: paleta escura do projeto (#0c1322 fundo), contraste WCAG AA
-- Animacoes sutis com Framer Motion (hover, transicoes de pagina)
-- Mobile-first: 320px → 768px → 1024px → 1440px
-- Componentes reutilizaveis: Button, Input, Card, Modal, Badge, Toast
-- Patterns de referencia: dashboards do Linear, forms do Stripe, navegacao do Notion`,
+## RESPONSABILIDADES:
+1. Analisar layout, hierarquia visual, espacamento, tipografia e cores
+2. Comparar com interfaces de referencia (Stripe, Linear, Vercel, Notion, Figma)
+3. Avaliar responsividade (mobile 320px, tablet 768px, desktop 1024px+)
+4. Verificar acessibilidade (contraste WCAG AA, focus states, alt texts)
+5. Avaliar UX (feedback visual, loading/empty/error states, fluxo do usuario)
+
+## REGRAS ABSOLUTAS:
+- NUNCA crie, edite ou reescreva arquivos de codigo
+- NUNCA use ferramentas de escrita (Write, Edit)
+- Voce APENAS analisa e produz um RELATORIO de revisao
+- Cada problema deve ser uma instrucao clara para o Frontend: "No arquivo X, componente Y, alterar Z"
+- Seja EXIGENTE — interfaces mediocres devem ser reprovadas
+- Criterios: Tailwind CSS (nunca inline), espacamento consistente (4/8/12/16/24/32/48px), hierarquia h1>h2>body, contraste WCAG AA, mobile-first`,
+      researcher: `Voce e um Pesquisador de Mercado do ForgeAI. Use WebSearch e WebFetch para pesquisar dados da empresa/cliente:
+1. Dados da empresa (historia, fundacao, tamanho, localizacao)
+2. Identidade visual (cores, logo, fontes, estilo de design)
+3. Produtos e servicos oferecidos
+4. Concorrentes diretos e posicionamento no mercado
+5. Presenca online (site oficial, redes sociais, avaliacoes)
+6. Publico-alvo e perfil de clientes
+Compile um relatorio em Markdown com secoes claras.`,
     };
 
     return `${rolePrompts[role]}${projectCtx}${projectMemCtx}${devMemCtx}${baseInstructions}`;
@@ -1655,15 +1787,110 @@ ${projectFiles ? `\n## Arquivos do projeto\n${projectFiles.substring(0, 4000)}` 
   /**
    * Obtem contexto do projeto ativo a partir do store.
    */
-  private async getProjectContext(): Promise<{ name: string; description: string; localPath: string | null } | null> {
+  private async getProjectContext(): Promise<{ name: string; description: string; localPath: string | null; researchEnabled: boolean } | null> {
     try {
       const { useProjectStore } = await import("../../stores/project-store");
       const project = useProjectStore.getState().getProject();
       if (!project) return null;
-      return { name: project.name, description: project.description, localPath: project.localPath };
+      return { name: project.name, description: project.description, localPath: project.localPath, researchEnabled: project.researchEnabled ?? false };
     } catch {
       return null;
     }
+  }
+
+  /**
+   * Garante que o projeto tem um diretório de trabalho.
+   * Se o projeto foi criado como "texto" (sem localPath), cria uma pasta
+   * em ~/ForgeAI-Projects/{nome-projeto}-{id} e atualiza o store + Supabase.
+   */
+  private async ensureProjectDir(projectId: string): Promise<void> {
+    try {
+      const { useProjectStore } = await import("../../stores/project-store");
+      const project = useProjectStore.getState().getProject();
+      if (!project || project.localPath) return; // já tem pasta
+
+      const res = await fetch("/api/project/ensure-dir", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ projectName: project.name, projectId: project.id }),
+      });
+      const data = await res.json() as { success: boolean; path?: string };
+      if (!data.success || !data.path) return;
+
+      console.log(`[OrchestratorService] Pasta do projeto criada: ${data.path}`);
+
+      // Atualiza store local
+      useProjectStore.getState()._updateProject(projectId, { localPath: data.path });
+
+      // Persiste no Supabase
+      const { getSupabaseClient } = await import("../supabase/safe-client");
+      const supabase = getSupabaseClient();
+      if (supabase) {
+        await supabase.from("projects").update({
+          source_type: "local_folder",
+          source_url: data.path,
+        }).eq("id", projectId);
+      }
+    } catch (err) {
+      console.warn("[OrchestratorService] Falha ao criar pasta do projeto:", err);
+    }
+  }
+
+  /**
+   * Sincroniza o custo total acumulado para o Supabase.
+   */
+  private async syncCostToSupabase(projectId: string): Promise<void> {
+    try {
+      const totalCost = llmGateway.getTotalCost();
+      const { getSupabaseClient } = await import("../supabase/safe-client");
+      const supabase = getSupabaseClient();
+      if (supabase) {
+        await supabase.from("projects").update({ total_cost: totalCost }).eq("id", projectId);
+      }
+    } catch {
+      // Fire-and-forget — não bloqueia o pipeline
+    }
+  }
+
+  /**
+   * Carrega o custo acumulado do Supabase e seta como base no gateway.
+   */
+  private async loadBaseCost(projectId: string): Promise<void> {
+    try {
+      const { getSupabaseClient } = await import("../supabase/safe-client");
+      const supabase = getSupabaseClient();
+      if (!supabase) return;
+
+      const { data } = await supabase
+        .from("projects")
+        .select("total_cost")
+        .eq("id", projectId)
+        .single();
+
+      if (data && typeof data.total_cost === "number" && data.total_cost > 0) {
+        llmGateway.setBaseCost(data.total_cost);
+        console.log(`[OrchestratorService] Custo base carregado: $${data.total_cost.toFixed(4)}`);
+      }
+    } catch {
+      // Não bloqueia
+    }
+  }
+
+  /**
+   * Monta o prompt para o agente Pesquisador (Phase 0).
+   * Instrui o agente a pesquisar dados da empresa/cliente na web.
+   */
+  private buildResearchPrompt(name: string, description: string): string {
+    return `Voce e um Pesquisador de Mercado do ForgeAI. Use WebSearch e WebFetch para pesquisar:
+1. Dados da empresa (historia, fundacao, tamanho, localizacao)
+2. Identidade visual (cores, logo, fontes, estilo de design)
+3. Produtos e servicos oferecidos
+4. Concorrentes diretos e posicionamento no mercado
+5. Presenca online (site oficial, redes sociais, avaliacoes)
+6. Publico-alvo e perfil de clientes
+
+Compile um relatorio em Markdown com secoes claras.
+Empresa: ${name} — ${description}`;
   }
 
   /**

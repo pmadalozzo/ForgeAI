@@ -1,11 +1,11 @@
 /**
- * Estacao de trabalho SVG com monitor, teclado, mouse e itens opcionais.
- * Convertido do protótipo com tipagem estrita.
+ * Estacao de trabalho SVG estilo SoWork/Gather.town.
+ * Mesa escura com profundidade 3D, cadeira teal, monitor com brilho colorido.
  */
 import type { DeskItem } from "@/types/agents";
 
 interface DeskProps {
-  /** Cor temática do agente (hex) — usada no brilho do monitor */
+  /** Cor tematica do agente (hex) — usada no brilho do monitor */
   color: string;
   /** Itens decorativos presentes na mesa */
   items: DeskItem[];
@@ -16,25 +16,28 @@ interface DeskProps {
 /** Caneca de cafe com vapor animado */
 function Coffee() {
   return (
-    <g transform="translate(6, 22)">
-      <rect x="0" y="2" width="6" height="7" rx="1.5" fill="#8B6914" />
+    <g transform="translate(6, 20)">
+      {/* Caneca escura */}
+      <rect x="0" y="2" width="7" height="8" rx="1.5" fill="#1a1a1a" stroke="#333" strokeWidth="0.5" />
       <rect
-        x="6"
+        x="7"
         y="4"
         width="3"
-        height="3"
+        height="4"
         rx="1.5"
         fill="none"
-        stroke="#8B6914"
+        stroke="#333"
         strokeWidth="0.8"
       />
+      {/* Liquido */}
+      <rect x="1" y="4" width="5" height="4" rx="0.5" fill="#6F4E37" opacity="0.8" />
       {/* Vapor */}
       <path
         d="M2 1 Q3 -1 2 -3"
         fill="none"
         stroke="#94a3b8"
-        strokeWidth="0.4"
-        opacity="0.5"
+        strokeWidth="0.5"
+        opacity="0.6"
       >
         <animate
           attributeName="d"
@@ -44,15 +47,15 @@ function Coffee() {
         />
       </path>
       <path
-        d="M4 1 Q5 -2 4 -4"
+        d="M4.5 1 Q5.5 -2 4.5 -4"
         fill="none"
         stroke="#94a3b8"
-        strokeWidth="0.3"
-        opacity="0.4"
+        strokeWidth="0.4"
+        opacity="0.5"
       >
         <animate
           attributeName="d"
-          values="M4 1 Q5 -2 4 -4;M4 1 Q3 -2 4 -4;M4 1 Q5 -2 4 -4"
+          values="M4.5 1 Q5.5 -2 4.5 -4;M4.5 1 Q3.5 -2 4.5 -4;M4.5 1 Q5.5 -2 4.5 -4"
           dur="2.5s"
           repeatCount="indefinite"
         />
@@ -64,11 +67,15 @@ function Coffee() {
 /** Vaso com planta */
 function Plant() {
   return (
-    <g transform="translate(56, 10)">
-      <rect x="2" y="6" width="7" height="8" rx="1" fill="#92400e" />
-      <circle cx="5.5" cy="5" r="5" fill="#22c55e" opacity="0.7" />
-      <circle cx="3" cy="3" r="3" fill="#16a34a" opacity="0.6" />
-      <circle cx="8" cy="4" r="3.5" fill="#15803d" opacity="0.5" />
+    <g transform="translate(56, 6)">
+      {/* Vaso de terracota */}
+      <path d="M2,12 L1,20 L11,20 L10,12 Z" fill="#8B4513" />
+      <rect x="1" y="11" width="10" height="2" rx="0.5" fill="#A0522D" />
+      {/* Folhagem vibrante */}
+      <ellipse cx="6" cy="8" rx="6" ry="5" fill="#228B22" opacity="0.85" />
+      <ellipse cx="3" cy="5" rx="4" ry="3.5" fill="#2E8B57" opacity="0.75" />
+      <ellipse cx="9" cy="6" rx="4.5" ry="4" fill="#006400" opacity="0.7" />
+      <ellipse cx="6" cy="3" rx="3" ry="2.5" fill="#32CD32" opacity="0.55" />
     </g>
   );
 }
@@ -76,14 +83,14 @@ function Plant() {
 /** Pilha de papeis */
 function Papers() {
   return (
-    <g transform="translate(8, 26)">
+    <g transform="translate(8, 24)">
       <rect
         x="0"
         y="0"
         width="8"
         height="10"
         rx="0.5"
-        fill="#f1f5f9"
+        fill="#e8e8e8"
         transform="rotate(-5)"
       />
       <rect
@@ -92,7 +99,7 @@ function Papers() {
         width="8"
         height="10"
         rx="0.5"
-        fill="#e2e8f0"
+        fill="#f0f0f0"
         transform="rotate(3)"
       />
       {[0, 1, 2, 3].map((i) => (
@@ -103,8 +110,8 @@ function Papers() {
           width={5 + (i % 3)}
           height="0.8"
           rx="0.3"
-          fill="#94a3b8"
-          opacity="0.5"
+          fill="#888"
+          opacity="0.6"
         />
       ))}
     </g>
@@ -112,9 +119,8 @@ function Papers() {
 }
 
 /**
- * Estacao de trabalho completa.
- * Inclui mesa, monitor com linhas de codigo animadas, teclado, mouse,
- * e itens decorativos opcionais.
+ * Estacao de trabalho completa estilo SoWork.
+ * Mesa escura com 3D, cadeira teal, monitor com linhas de codigo.
  */
 export function Desk({ color, items, agentStatus }: DeskProps) {
   const hasCoffee = items.includes("caneca-cafe");
@@ -124,38 +130,69 @@ export function Desk({ color, items, agentStatus }: DeskProps) {
 
   return (
     <g>
-      {/* Superficie da mesa */}
+      {/* Sombra da mesa no chao */}
+      <ellipse cx="35" cy="54" rx="36" ry="5" fill="#000000" opacity="0.3" />
+
+      {/* ── Cadeira teal (atras da mesa) ── */}
+      <g transform="translate(22, 42)">
+        {/* Encosto da cadeira */}
+        <rect x="4" y="-4" width="18" height="12" rx="3" fill="#0891B2" stroke="#0E7490" strokeWidth="0.8" />
+        {/* Assento */}
+        <rect x="2" y="8" width="22" height="4" rx="2" fill="#0891B2" stroke="#0E7490" strokeWidth="0.5" />
+        {/* Base da cadeira */}
+        <rect x="10" y="12" width="6" height="3" rx="0.5" fill="#333" />
+        {/* Rodas */}
+        <circle cx="8" cy="16" r="1.5" fill="#444" />
+        <circle cx="18" cy="16" r="1.5" fill="#444" />
+        <circle cx="13" cy="17" r="1.5" fill="#444" />
+      </g>
+
+      {/* ── Mesa escura com profundidade 3D ── */}
+      {/* Face superior da mesa (mais clara) */}
       <rect
         x="0"
         y="18"
         width="70"
-        height="24"
-        rx="3"
-        fill="#5c4a3a"
-        stroke="#4a3a2e"
-        strokeWidth="0.8"
-      />
-      <rect
-        x="2"
-        y="19"
-        width="66"
-        height="6"
-        rx="1"
-        fill="#6b5a4a"
-        opacity="0.5"
-      />
-      {/* Pes da mesa */}
-      <rect x="4" y="42" width="4" height="10" rx="1" fill="#4a3a2e" />
-      <rect x="62" y="42" width="4" height="10" rx="1" fill="#4a3a2e" />
-      {/* Monitor */}
-      <rect
-        x="22"
-        y="2"
-        width="26"
-        height="17"
+        height="8"
         rx="2"
-        fill="#1a1a2e"
-        stroke={isReview ? "#8B5CF6" : "#2d3748"}
+        fill="#3a3a3a"
+      />
+      {/* Face frontal da mesa (mais escura — profundidade) */}
+      <rect
+        x="0"
+        y="26"
+        width="70"
+        height="14"
+        rx="0"
+        fill="#1a1a1a"
+        stroke="#111"
+        strokeWidth="0.5"
+      />
+      {/* Borda inferior arredondada */}
+      <rect
+        x="0"
+        y="38"
+        width="70"
+        height="2"
+        fill="#111"
+        rx="1"
+      />
+      {/* Pes da mesa — metal escuro */}
+      <rect x="4" y="40" width="3" height="12" rx="1" fill="#2a2a2a" />
+      <rect x="63" y="40" width="3" height="12" rx="1" fill="#2a2a2a" />
+      {/* Barra entre pes */}
+      <rect x="6" y="48" width="58" height="1.5" rx="0.5" fill="#222" />
+
+      {/* ── Monitor ── */}
+      {/* Moldura do monitor (escura) */}
+      <rect
+        x="20"
+        y="0"
+        width="30"
+        height="19"
+        rx="2"
+        fill="#111111"
+        stroke={isReview ? "#8B5CF6" : "#222"}
         strokeWidth={isReview ? 1.5 : 1}
       >
         {isReview && (
@@ -167,98 +204,103 @@ export function Desk({ color, items, agentStatus }: DeskProps) {
           />
         )}
       </rect>
-      <rect x="24" y="4" width="22" height="12" rx="1" fill="#0f172a" />
-      {/* Suporte do monitor */}
-      <rect x="32" y="19" width="6" height="3" rx="0.5" fill="#2d3748" />
-      <rect x="29" y="21" width="12" height="2" rx="1" fill="#2d3748" />
-      {/* Brilho na tela */}
+      {/* Tela do monitor */}
+      <rect x="22" y="2" width="26" height="14" rx="1" fill="#0a0a1a" />
+      {/* Brilho colorido na tela */}
       <rect
-        x="25"
-        y="5"
-        width="20"
-        height="10"
+        x="23"
+        y="3"
+        width="24"
+        height="12"
         rx="0.5"
         fill={color}
         opacity="0.1"
       />
+      {/* Suporte do monitor */}
+      <rect x="32" y="19" width="6" height="2" rx="0.5" fill="#222" />
+      <rect x="29" y="20" width="12" height="2" rx="1" fill="#333" />
+
       {/* Linhas de codigo ou diff */}
       {isReview
-        ? /* Diff verde/vermelho no modo review */
-          [0, 1, 2, 3].map((i) => (
+        ? [0, 1, 2, 3].map((i) => (
             <rect
               key={i}
-              x={26}
-              y={6 + i * 2.5}
-              width={10 + ((i * 5) % 8)}
+              x={24}
+              y={5 + i * 2.5}
+              width={12 + ((i * 5) % 8)}
               height="1.2"
               rx="0.5"
               fill={i % 2 === 0 ? "#22c55e" : "#ef4444"}
-              opacity="0.55"
+              opacity="0.7"
             >
               <animate
                 attributeName="opacity"
-                values="0.55;0.35;0.55"
+                values="0.7;0.4;0.7"
                 dur={`${1.5 + i * 0.3}s`}
                 repeatCount="indefinite"
               />
             </rect>
           ))
-        : /* Linhas de codigo animadas */
-          [0, 1, 2, 3].map((i) => (
+        : [0, 1, 2, 3].map((i) => (
             <rect
               key={i}
-              x={26 + (i % 2) * 2}
-              y={6 + i * 2.5}
-              width={8 + ((i * 3) % 10)}
+              x={24 + (i % 2) * 2}
+              y={5 + i * 2.5}
+              width={10 + ((i * 3) % 10)}
               height="1.2"
               rx="0.5"
               fill={color}
-              opacity="0.4"
+              opacity="0.55"
             >
               <animate
                 attributeName="width"
-                values={`${8 + ((i * 3) % 10)};${12 + ((i * 2) % 8)};${8 + ((i * 3) % 10)}`}
+                values={`${10 + ((i * 3) % 10)};${14 + ((i * 2) % 8)};${10 + ((i * 3) % 10)}`}
                 dur={`${2 + i * 0.5}s`}
                 repeatCount="indefinite"
               />
             </rect>
           ))}
-      {/* Teclado */}
+
+      {/* ── Teclado escuro ── */}
       <rect
-        x="24"
-        y="25"
-        width="22"
-        height="6"
+        x="22"
+        y="24"
+        width="24"
+        height="7"
         rx="1.5"
-        fill="#2d3748"
-        stroke="#475569"
-        strokeWidth="0.3"
+        fill="#1a1a1a"
+        stroke="#333"
+        strokeWidth="0.5"
       />
       {[0, 1, 2].map((row) =>
-        [0, 1, 2, 3, 4, 5].map((col) => (
+        [0, 1, 2, 3, 4, 5, 6].map((col) => (
           <rect
             key={`key-${row}-${col}`}
-            x={25.5 + col * 3.3}
-            y={26 + row * 1.8}
-            width="2.5"
+            x={23.5 + col * 3}
+            y={25.5 + row * 1.8}
+            width="2"
             height="1.2"
             rx="0.3"
-            fill="#475569"
-            opacity="0.6"
+            fill="#333"
+            opacity="0.8"
           />
         )),
       )}
-      {/* Mouse */}
+
+      {/* ── Mouse escuro ── */}
       <rect
         x="50"
-        y="27"
-        width="4"
-        height="5"
-        rx="2"
-        fill="#475569"
-        stroke="#64748b"
-        strokeWidth="0.3"
+        y="25"
+        width="5"
+        height="6"
+        rx="2.5"
+        fill="#1a1a1a"
+        stroke="#333"
+        strokeWidth="0.5"
       />
+      {/* Scroll wheel */}
+      <rect x="51.5" y="26" width="2" height="1.5" rx="0.5" fill="#444" />
+
       {/* Itens opcionais */}
       {hasCoffee && <Coffee />}
       {hasPlant && <Plant />}

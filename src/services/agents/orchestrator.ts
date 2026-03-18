@@ -23,8 +23,8 @@ export interface DecomposedTask {
   dependencies: string[];
   /** Estimativa de duração em minutos */
   estimatedMinutes: number;
-  /** Fase do pipeline (1=Planning, 2=Architecture, 3=Development, 4=Quality, 5=Delivery) */
-  phase: 1 | 2 | 3 | 4 | 5;
+  /** Fase do pipeline (0=Research, 1=Planning, 2=Architecture, 3=Development, 4=Quality, 5=Delivery) */
+  phase: 0 | 1 | 2 | 3 | 4 | 5;
   /** Metadados extras */
   metadata: Record<string, string>;
 }

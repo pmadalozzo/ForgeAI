@@ -9,7 +9,26 @@ import type { LLMProvider } from "@/types/agents";
  * Cores, posições e zonas conforme especificado no CLAUDE.md.
  */
 const agentesIniciais: Agent[] = [
-  // === Zona Management (topo) — 3 agentes, canvas 920px ===
+  // === Zona Research (topo) — 1 agente ===
+  {
+    id: "researcher",
+    name: "Pesquisador",
+    emoji: "🔬",
+    color: "#A855F7",
+    role: "researcher",
+    status: AgentStatus.Idle,
+    progress: 0,
+    currentTask: null,
+    provider: "claude-code",
+    linesWritten: 0,
+    desk: {
+      position: { x: 430, y: 95 },
+      items: ["pilha-papeis", "caneca-cafe"],
+      zone: "research",
+    },
+  },
+
+  // === Zona Management — 3 agentes, deslocados +170px ===
   {
     id: "orchestrator",
     name: "Orquestrador",
@@ -22,7 +41,7 @@ const agentesIniciais: Agent[] = [
     provider: "claude-code",
     linesWritten: 0,
     desk: {
-      position: { x: 430, y: 80 },
+      position: { x: 430, y: 285 },
       items: ["caneca-cafe", "monitor-extra"],
       zone: "management",
     },
@@ -39,7 +58,7 @@ const agentesIniciais: Agent[] = [
     provider: "claude-code",
     linesWritten: 0,
     desk: {
-      position: { x: 200, y: 80 },
+      position: { x: 200, y: 285 },
       items: ["pilha-papeis", "caneca-cafe"],
       zone: "management",
     },
@@ -56,13 +75,13 @@ const agentesIniciais: Agent[] = [
     provider: "claude-code",
     linesWritten: 0,
     desk: {
-      position: { x: 660, y: 80 },
+      position: { x: 660, y: 285 },
       items: ["post-its", "caneca-cafe"],
       zone: "management",
     },
   },
 
-  // === Zona Development (centro) — 3 agentes ===
+  // === Zona Development (centro) — 3 agentes, deslocados +170px ===
   {
     id: "frontend",
     name: "Frontend Dev",
@@ -75,7 +94,7 @@ const agentesIniciais: Agent[] = [
     provider: "claude-code",
     linesWritten: 0,
     desk: {
-      position: { x: 200, y: 280 },
+      position: { x: 200, y: 475 },
       items: ["vaso-planta", "caneca-cafe"],
       zone: "development",
     },
@@ -92,7 +111,7 @@ const agentesIniciais: Agent[] = [
     provider: "claude-code",
     linesWritten: 0,
     desk: {
-      position: { x: 430, y: 280 },
+      position: { x: 430, y: 475 },
       items: ["caneca-cafe", "pilha-papeis"],
       zone: "development",
     },
@@ -109,13 +128,13 @@ const agentesIniciais: Agent[] = [
     provider: "claude-code",
     linesWritten: 0,
     desk: {
-      position: { x: 660, y: 280 },
+      position: { x: 660, y: 475 },
       items: ["monitor-extra"],
       zone: "development",
     },
   },
 
-  // === Zona QA & Ops (base) — 4 agentes com espaçamento uniforme ===
+  // === Zona QA & Ops (base) — 5 agentes, deslocados +170px ===
   {
     id: "qa",
     name: "QA Engineer",
@@ -128,7 +147,7 @@ const agentesIniciais: Agent[] = [
     provider: "claude-code",
     linesWritten: 0,
     desk: {
-      position: { x: 100, y: 480 },
+      position: { x: 100, y: 670 },
       items: ["pilha-papeis"],
       zone: "qa-ops",
     },
@@ -145,7 +164,7 @@ const agentesIniciais: Agent[] = [
     provider: "claude-code",
     linesWritten: 0,
     desk: {
-      position: { x: 260, y: 480 },
+      position: { x: 260, y: 670 },
       items: ["caneca-cafe"],
       zone: "qa-ops",
     },
@@ -162,7 +181,7 @@ const agentesIniciais: Agent[] = [
     provider: "claude-code",
     linesWritten: 0,
     desk: {
-      position: { x: 420, y: 480 },
+      position: { x: 420, y: 670 },
       items: ["monitor-extra", "caneca-cafe"],
       zone: "qa-ops",
     },
@@ -179,7 +198,7 @@ const agentesIniciais: Agent[] = [
     provider: "claude-code",
     linesWritten: 0,
     desk: {
-      position: { x: 580, y: 480 },
+      position: { x: 580, y: 670 },
       items: ["vaso-planta", "post-its"],
       zone: "qa-ops",
     },
@@ -196,7 +215,7 @@ const agentesIniciais: Agent[] = [
     provider: "claude-code",
     linesWritten: 0,
     desk: {
-      position: { x: 740, y: 480 },
+      position: { x: 740, y: 670 },
       items: ["post-its", "caneca-cafe"],
       zone: "qa-ops",
     },

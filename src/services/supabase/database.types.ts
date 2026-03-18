@@ -68,6 +68,7 @@ export interface Database {
           created_by: string;
           progress: number;
           total_cost: number;
+          research_enabled: boolean;
           created_at: string;
           updated_at: string;
         };
@@ -83,6 +84,7 @@ export interface Database {
           created_by: string;
           progress?: number;
           total_cost?: number;
+          research_enabled?: boolean;
           created_at?: string;
           updated_at?: string;
         };
@@ -98,6 +100,7 @@ export interface Database {
           created_by?: string;
           progress?: number;
           total_cost?: number;
+          research_enabled?: boolean;
           created_at?: string;
           updated_at?: string;
         };

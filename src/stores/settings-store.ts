@@ -101,7 +101,7 @@ function createDefaultProviders(): Record<LLMProvider, LLMProviderSettings> {
 function createDefaultAgentDefaults(): Record<AgentRole, { provider: LLMProvider; model: string; effort: ClaudeEffort }> {
   const roles: AgentRole[] = [
     "orchestrator", "pm", "architect", "frontend", "backend",
-    "database", "qa", "security", "devops", "reviewer", "designer",
+    "database", "qa", "security", "devops", "reviewer", "designer", "researcher",
   ];
 
   const defaults = {} as Record<AgentRole, { provider: LLMProvider; model: string; effort: ClaudeEffort }>;

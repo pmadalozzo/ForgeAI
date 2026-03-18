@@ -239,10 +239,32 @@ export class LLMGateway {
     return Array.from(this.usageByAgent.values());
   }
 
+  /** Custo base carregado do banco (sessões anteriores) */
+  private baseCostUsd = 0;
+
   /**
-   * Retorna o custo total acumulado de todos os agentes.
+   * Define o custo base acumulado de sessões anteriores.
+   * Chamado ao carregar o projeto do Supabase.
+   */
+  setBaseCost(costUsd: number): void {
+    this.baseCostUsd = costUsd;
+  }
+
+  /**
+   * Retorna o custo total acumulado de todos os agentes (sessão atual + anteriores).
    */
   getTotalCost(): number {
+    let total = this.baseCostUsd;
+    for (const usage of this.usageByAgent.values()) {
+      total += usage.totalCostUsd;
+    }
+    return total;
+  }
+
+  /**
+   * Retorna apenas o custo da sessão atual (sem base).
+   */
+  getSessionCost(): number {
     let total = 0;
     for (const usage of this.usageByAgent.values()) {
       total += usage.totalCostUsd;

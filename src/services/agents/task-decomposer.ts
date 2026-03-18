@@ -15,10 +15,11 @@ import type { TaskDecomposer, DecomposedTask } from "./orchestrator";
 import type { LLMGateway } from "../llm/llm-gateway";
 
 /** Numero de fase valido no pipeline */
-type PhaseNumber = 1 | 2 | 3 | 4 | 5;
+type PhaseNumber = 0 | 1 | 2 | 3 | 4 | 5;
 
 /** Nomes das fases para referencia */
 const PHASE_NAMES: Record<PhaseNumber, string> = {
+  0: "RESEARCH",
   1: "PLANNING",
   2: "ARCHITECTURE",
   3: "DEVELOPMENT",
@@ -28,6 +29,7 @@ const PHASE_NAMES: Record<PhaseNumber, string> = {
 
 /** Mapeamento de roles para suas fases esperadas */
 const ROLE_TO_PHASE: Record<string, PhaseNumber> = {
+  researcher: 0,
   pm: 1,
   architect: 2,
   frontend: 3,
@@ -54,7 +56,7 @@ interface ParsedSubtask {
 /** Roles validas para validacao */
 const VALID_ROLES: ReadonlySet<string> = new Set<string>([
   "orchestrator", "pm", "architect", "frontend", "backend",
-  "database", "qa", "security", "devops", "reviewer", "designer",
+  "database", "qa", "security", "devops", "reviewer", "designer", "researcher",
 ]);
 
 /** Aliases de roles que o LLM pode gerar */
@@ -75,6 +77,9 @@ const ROLE_ALIASES: Record<string, AgentRole> = {
   "db": "database",
   "front": "frontend",
   "back": "backend",
+  "pesquisador": "researcher",
+  "research": "researcher",
+  "pesquisa": "researcher",
 };
 
 /** Prioridades validas */
@@ -83,7 +88,7 @@ const VALID_PRIORITIES: ReadonlySet<string> = new Set([
 ]);
 
 /** Fases validas */
-const VALID_PHASES: ReadonlySet<number> = new Set([1, 2, 3, 4, 5]);
+const VALID_PHASES: ReadonlySet<number> = new Set([0, 1, 2, 3, 4, 5]);
 
 /**
  * Implementacao do TaskDecomposer que usa LLMGateway para chamar o LLM.

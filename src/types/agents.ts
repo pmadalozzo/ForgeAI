@@ -41,7 +41,8 @@ export type AgentRole =
   | "security"
   | "devops"
   | "reviewer"
-  | "designer";
+  | "designer"
+  | "researcher";
 
 /** Provider de LLM que o agente utiliza */
 export type LLMProvider =
@@ -76,7 +77,7 @@ export type DeskItem =
   | "post-its";
 
 /** Zonas do escritório virtual */
-export type OfficeZone = "management" | "development" | "qa-ops";
+export type OfficeZone = "management" | "development" | "qa-ops" | "research";
 
 /** Agente de IA — representação completa */
 export interface Agent {
@@ -154,6 +155,10 @@ export interface Project {
   createdAt: string;
   /** Timestamp da última atualização */
   updatedAt: string;
+  /** Se pesquisa de mercado está habilitada (Phase 0) */
+  researchEnabled: boolean;
+  /** Relatório de pesquisa gerado pelo Pesquisador */
+  researchReport: string | null;
 }
 
 /** Rota de caminhada de um agente entre mesas */

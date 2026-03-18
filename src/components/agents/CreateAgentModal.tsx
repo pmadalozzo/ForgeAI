@@ -24,16 +24,18 @@ const ALL_ROLES: { value: AgentRole; label: string }[] = [
 ];
 
 const ZONES: { value: OfficeZone; label: string }[] = [
-  { value: "management", label: "Management (Topo)" },
+  { value: "research", label: "Research (Topo)" },
+  { value: "management", label: "Management" },
   { value: "development", label: "Development (Centro)" },
   { value: "qa-ops", label: "QA & Ops (Base)" },
 ];
 
 /** Posições automáticas baseadas na zona */
 const ZONE_POSITIONS: Record<OfficeZone, { x: number; y: number }> = {
-  management: { x: 430, y: 120 },
-  development: { x: 430, y: 310 },
-  "qa-ops": { x: 430, y: 500 },
+  research: { x: 430, y: 95 },
+  management: { x: 430, y: 285 },
+  development: { x: 430, y: 475 },
+  "qa-ops": { x: 430, y: 670 },
 };
 
 const DEFAULT_COLORS = [

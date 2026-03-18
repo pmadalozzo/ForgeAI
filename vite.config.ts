@@ -7,6 +7,7 @@ import { spawn, execSync, execFile } from "child_process";
 import type { ChildProcess } from "child_process";
 import type { Plugin } from "vite";
 import type { IncomingMessage, ServerResponse } from "http";
+import { chromium } from "playwright";
 
 /** Map de processos Claude ativos, chave = timestamp de criação */
 const activeProcesses = new Map<string, ChildProcess>();
@@ -198,6 +199,26 @@ function forgeApiPlugin(): Plugin {
         }
 
         activeProcesses.clear();
+
+        // Mata dev servers órfãos (portas 3000-3099 que agentes podem ter iniciado)
+        try {
+          const netstat = execSync("netstat -ano", { encoding: "utf-8", windowsHide: true });
+          const orphanPids = new Set<string>();
+          for (const line of netstat.split("\n")) {
+            const match = line.match(/LISTENING\s+(\d+)\s*$/);
+            const portMatch = line.match(/:30(\d{2})\s/);
+            if (match && portMatch) {
+              orphanPids.add(match[1]!);
+            }
+          }
+          for (const pid of orphanPids) {
+            try {
+              execSync(`taskkill /pid ${pid} /T /F`, { windowsHide: true, stdio: "ignore" });
+              console.log(`[forge-api] Dev server órfão (PID ${pid}) morto`);
+            } catch { /* já morreu */ }
+          }
+        } catch { /* netstat falhou — ignora */ }
+
         json(res, { success: true, killed: count });
       });
 
@@ -308,6 +329,104 @@ function forgeApiPlugin(): Plugin {
           json(res, { files: [], error: String(err) });
         }
       });
+
+      // ── POST /api/project/screenshot ──────────────────────────────────
+      // Inicia dev server do projeto, captura screenshot com Playwright, retorna caminho.
+      // Usado pelo Designer agent para análise visual da interface renderizada.
+      server.middlewares.use("/api/project/screenshot", async (req, res) => {
+        if (req.method !== "POST") { json(res, { error: "Use POST" }, 405); return; }
+
+        let devProc: ChildProcess | null = null;
+        try {
+          const body = JSON.parse(await readBody(req)) as {
+            projectPath?: string;
+            width?: number;
+            height?: number;
+          };
+          const projectPath = body.projectPath;
+          if (!projectPath) { json(res, { success: false, error: "projectPath required" }, 400); return; }
+
+          // Verifica se o projeto tem package.json com script dev
+          const pkgPath = path.join(projectPath, "package.json");
+          if (!fs.existsSync(pkgPath)) {
+            json(res, { success: false, error: "package.json not found" });
+            return;
+          }
+
+          const width = body.width ?? 1280;
+          const height = body.height ?? 800;
+          const port = 5200 + Math.floor(Math.random() * 700); // 5200-5900
+
+          console.log(`[forge-api] screenshot: iniciando dev server na porta ${port} (${projectPath})`);
+
+          // Inicia dev server do projeto
+          devProc = spawn("npx", ["vite", "--port", port.toString()], {
+            cwd: projectPath,
+            stdio: ["ignore", "pipe", "pipe"],
+            env: { ...process.env },
+            windowsHide: true,
+          });
+
+          // Aguarda o server ficar pronto (detecta URL no stdout)
+          const serverUrl = await new Promise<string>((resolve, reject) => {
+            const timeout = setTimeout(() => reject(new Error("Dev server timeout (30s)")), 30_000);
+            let output = "";
+
+            devProc!.stdout?.on("data", (chunk: Buffer) => {
+              output += chunk.toString();
+              const urlMatch = output.match(/Local:\s+(http:\/\/localhost:\d+)/);
+              if (urlMatch) {
+                clearTimeout(timeout);
+                resolve(urlMatch[1]!);
+              }
+            });
+
+            devProc!.stderr?.on("data", (chunk: Buffer) => {
+              output += chunk.toString();
+            });
+
+            devProc!.on("close", (code) => {
+              clearTimeout(timeout);
+              reject(new Error(`Dev server saiu com code ${code}: ${output.slice(-200)}`));
+            });
+          });
+
+          console.log(`[forge-api] screenshot: dev server pronto em ${serverUrl}`);
+
+          // Aguarda um pouco para assets carregarem
+          await new Promise((r) => setTimeout(r, 2000));
+
+          // Captura screenshot com Playwright (usa Chrome local instalado)
+          const browser = await chromium.launch({ channel: "chrome", headless: true });
+          const page = await browser.newPage({ viewport: { width, height } });
+          await page.goto(serverUrl, { waitUntil: "networkidle", timeout: 15_000 });
+          await page.waitForTimeout(1500); // animações
+
+          const screenshotPath = path.join(os.tmpdir(), `forgeai-screenshot-${Date.now()}.png`);
+          await page.screenshot({ path: screenshotPath, fullPage: true });
+          await browser.close();
+
+          console.log(`[forge-api] screenshot: capturado em ${screenshotPath}`);
+
+          // Mata o dev server
+          try {
+            if (devProc.pid) {
+              execSync(`taskkill /pid ${devProc.pid} /T /F 2>nul`, { windowsHide: true });
+            }
+          } catch { devProc.kill(); }
+          devProc = null;
+
+          json(res, { success: true, screenshotPath });
+        } catch (err) {
+          console.error("[forge-api] screenshot erro:", err);
+          // Limpa dev server se ainda estiver rodando
+          if (devProc?.pid) {
+            try { execSync(`taskkill /pid ${devProc.pid} /T /F 2>nul`, { windowsHide: true }); } catch { devProc.kill(); }
+          }
+          json(res, { success: false, error: String(err instanceof Error ? err.message : err) });
+        }
+      });
+
 
       // ── POST /api/claude/messages ─────────────────────────────────────
       // Chama a API Anthropic Messages diretamente (server-side, sem CORS).

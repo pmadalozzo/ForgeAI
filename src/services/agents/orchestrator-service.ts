@@ -1312,6 +1312,27 @@ ${codeToReview.substring(0, 6000)}`,
     });
 
     agentStore.setAgentStatus(designerAgent.id, AgentStatus.Review);
+    agentStore.setAgentTask(designerAgent.id, "Capturando screenshot da interface...");
+
+    // Captura screenshot da interface renderizada para análise visual
+    let screenshotInstruction = "";
+    if (project?.localPath) {
+      try {
+        const ssRes = await fetch("/api/project/screenshot", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ projectPath: project.localPath }),
+        });
+        const ssData = await ssRes.json() as { success: boolean; screenshotPath?: string };
+        if (ssData.success && ssData.screenshotPath) {
+          screenshotInstruction = `\n\n--- SCREENSHOT DA INTERFACE RENDERIZADA ---\nIMPORTANTE: Use a ferramenta Read para visualizar este screenshot: ${ssData.screenshotPath}\nAnalise VISUALMENTE o layout real renderizado no browser: alinhamento, espacamento, cores, hierarquia.\n`;
+          console.log(`[OrchestratorService] Screenshot capturado para Designer: ${ssData.screenshotPath}`);
+        }
+      } catch (err) {
+        console.warn("[OrchestratorService] Falha ao capturar screenshot:", err);
+      }
+    }
+
     agentStore.setAgentTask(designerAgent.id, "Revisando interface do Frontend...");
 
     try {
@@ -1330,7 +1351,7 @@ ${codeToReview.substring(0, 6000)}`,
 
 Se tiver problemas, liste as correções necessárias para o Frontend aplicar.
 Se estiver tudo OK, responda APROVADO.
-
+${screenshotInstruction}
 --- CÓDIGO DA INTERFACE ---
 ${codeToReview.substring(0, 6000)}`,
         phase: 3,

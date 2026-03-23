@@ -33,6 +33,8 @@ export const EFFORT_LABELS: Record<ClaudeEffort, { label: string; description: s
 
 /** Estado completo da store de configurações */
 export interface SettingsState {
+  /** Indica se as configurações do usuário já foram carregadas do Supabase */
+  _settingsLoaded: boolean;
   /** Configurações por provider */
   providers: Record<LLMProvider, LLMProviderSettings>;
   /** Provider/modelo/effort padrão por papel de agente */
@@ -160,6 +162,10 @@ function scheduleSync() {
   if (!userId) return;
 
   const state = useSettingsStore.getState();
+
+  // Não sincronizar antes de carregar as configurações do usuário — evita
+  // sobrescrever os dados salvos com valores default/env durante a inicialização.
+  if (!state._settingsLoaded) return;
   syncSettingsToSupabase(userId, {
     providers: state.providers,
     agentDefaults: state.agentDefaults,
@@ -176,6 +182,7 @@ function scheduleSync() {
 export const useSettingsStore = create<SettingsState>()(
   devtools(
     (set, get) => ({
+      _settingsLoaded: false,
       providers: createDefaultProviders(),
       agentDefaults: createDefaultAgentDefaults(),
       supervisionMode: SupervisionMode.Watch,
@@ -257,10 +264,14 @@ export const useSettingsStore = create<SettingsState>()(
               maxParallelAgents: remote.maxParallelAgents,
               autoFastModel: remote.autoFastModel,
               theme: remote.theme,
+              _settingsLoaded: true,
             },
             false,
             "loadSettings",
           );
+        } else {
+          // Mesmo sem dados remotos, marcar como carregado para permitir sync futuro
+          set({ _settingsLoaded: true }, false, "loadSettings/noRemote");
         }
       },
     }),

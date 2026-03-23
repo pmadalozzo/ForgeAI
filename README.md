@@ -162,4 +162,4 @@ O sistema é agnóstico de LLM — cada agente pode usar um provider diferente:
 
 ## Licença
 
-Este projeto é privado e de uso proprietário.
+MIT License

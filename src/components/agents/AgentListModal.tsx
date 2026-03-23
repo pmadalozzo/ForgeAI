@@ -96,8 +96,8 @@ export function AgentListModal({ isOpen, onClose }: AgentListModalProps) {
           exit={{ scale: 0.8, opacity: 0, y: 20 }}
           transition={{ type: "spring", duration: 0.4, bounce: 0.3 }}
           style={{
-            width: 800,
-            height: 600,
+            width: 720,
+            maxHeight: "85vh",
             background: "rgba(12, 19, 34, 0.85)",
             backdropFilter: "blur(20px) saturate(180%)",
             border: "1px solid rgba(30, 41, 59, 0.8)",
@@ -222,10 +222,10 @@ export function AgentListModal({ isOpen, onClose }: AgentListModalProps) {
           style={{
             flex: 1,
             overflow: "auto",
-            padding: "20px 28px",
+            padding: "16px 24px",
             display: "grid",
-            gridTemplateColumns: "repeat(2, 1fr)",
-            gap: 16,
+            gridTemplateColumns: "repeat(3, 1fr)",
+            gap: 12,
             alignContent: "start",
           }}
         >
@@ -239,177 +239,189 @@ export function AgentListModal({ isOpen, onClose }: AgentListModalProps) {
                 initial={{ opacity: 0, y: 20, scale: 0.9 }}
                 animate={{ opacity: 1, y: 0, scale: 1 }}
                 transition={{
-                  delay: 0.1 + (index * 0.05),
+                  delay: 0.1 + (index * 0.04),
                   duration: 0.3,
                   type: "spring",
                   damping: 25
                 }}
                 whileHover={{
-                  scale: 1.03,
-                  y: -2,
-                  boxShadow: `0 20px 40px rgba(0, 0, 0, 0.4), 0 0 30px ${agent.color}30`
+                  scale: 1.04,
+                  y: -3,
+                  boxShadow: `0 16px 32px rgba(0, 0, 0, 0.4), 0 0 24px ${agent.color}25`,
+                  borderColor: `${agent.color}60`,
                 }}
-                whileTap={{ scale: 0.98 }}
+                whileTap={{ scale: 0.97 }}
                 style={{
                   display: "flex",
+                  flexDirection: "column",
                   alignItems: "center",
-                  gap: 16,
-                  padding: "18px 20px",
-                  background: "rgba(30, 41, 59, 0.6)",
+                  gap: 0,
+                  padding: "16px 14px 14px",
+                  background: "rgba(15, 23, 42, 0.7)",
                   backdropFilter: "blur(16px) saturate(180%)",
-                  border: `1px solid rgba(51, 65, 85, 0.6)`,
-                  borderRadius: 16,
+                  border: "1px solid rgba(51, 65, 85, 0.5)",
+                  borderRadius: 14,
                   cursor: "pointer",
                   fontFamily: "inherit",
-                  textAlign: "left",
-                  transition: "all 0.3s cubic-bezier(0.4, 0, 0.2, 1)",
+                  textAlign: "center",
+                  transition: "border-color 0.3s ease",
                   position: "relative",
                   overflow: "hidden",
                   boxShadow: `
-                    0 8px 32px rgba(0, 0, 0, 0.2),
-                    0 0 15px rgba(${agent.color.slice(1)}, 0.08),
-                    inset 0 1px 0 rgba(255, 255, 255, 0.1)
-                  `
-                }}
-                onHoverStart={() => {
-                  // Efeito adicional via estilo direto se necessário
+                    0 4px 16px rgba(0, 0, 0, 0.2),
+                    inset 0 1px 0 rgba(255, 255, 255, 0.06)
+                  `,
                 }}
               >
-                {/* Glassmorphism overlay */}
+                {/* Top accent bar */}
                 <div
                   style={{
                     position: "absolute",
-                    inset: 0,
-                    background: `linear-gradient(135deg, ${agent.color}08, transparent)`,
-                    opacity: 0,
-                    transition: "opacity 0.3s ease"
+                    top: 0,
+                    left: "15%",
+                    right: "15%",
+                    height: 2,
+                    background: `linear-gradient(90deg, transparent, ${agent.color}, transparent)`,
+                    opacity: 0.6,
+                    borderRadius: "0 0 2px 2px",
                   }}
-                  className="glass-overlay"
                 />
 
-                {/* Emoji + cor indicator */}
-                <motion.div
-                  whileHover={{ scale: 1.1, rotate: 5 }}
+                {/* Emoji avatar */}
+                <div
                   style={{
-                    width: 48,
-                    height: 48,
-                    borderRadius: 12,
-                    background: `linear-gradient(135deg, ${agent.color}20, ${agent.color}10)`,
-                    border: `1px solid ${agent.color}40`,
+                    width: 40,
+                    height: 40,
+                    borderRadius: 10,
+                    background: `linear-gradient(145deg, ${agent.color}18, ${agent.color}08)`,
+                    border: `1px solid ${agent.color}30`,
                     display: "flex",
                     alignItems: "center",
                     justifyContent: "center",
-                    fontSize: 24,
+                    fontSize: 20,
                     flexShrink: 0,
-                    boxShadow: `0 4px 20px ${agent.color}25`,
-                    position: "relative",
-                    zIndex: 2
+                    marginBottom: 8,
                   }}
                 >
                   {agent.emoji}
-                </motion.div>
-
-                {/* Info */}
-                <div style={{ flex: 1, minWidth: 0, position: "relative", zIndex: 2 }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6 }}>
-                    <span
-                      style={{
-                        fontSize: 14,
-                        fontWeight: 700,
-                        color: "#e2e8f0",
-                        overflow: "hidden",
-                        textOverflow: "ellipsis",
-                        whiteSpace: "nowrap",
-                        textShadow: "0 1px 3px rgba(0, 0, 0, 0.3)"
-                      }}
-                    >
-                      {agent.name}
-                    </span>
-                    <motion.span
-                      initial={{ scale: 0.8 }}
-                      animate={{ scale: 1 }}
-                      style={{
-                        fontSize: 10,
-                        color: statusCfg.color,
-                        background: `${statusCfg.color}20`,
-                        backdropFilter: "blur(8px)",
-                        padding: "3px 8px",
-                        borderRadius: 8,
-                        fontWeight: 600,
-                        flexShrink: 0,
-                        border: `1px solid ${statusCfg.color}30`,
-                        boxShadow: `0 2px 8px ${statusCfg.color}20`
-                      }}
-                    >
-                      {statusCfg.icon} {statusCfg.label}
-                    </motion.span>
-                  </div>
-                  <div
-                    style={{
-                      display: "flex",
-                      alignItems: "center",
-                      gap: 10,
-                      marginBottom: agent.currentTask ? 6 : 0,
-                    }}
-                  >
-                    <span style={{
-                      fontSize: 11,
-                      color: "#94a3b8",
-                      background: "rgba(71, 85, 105, 0.3)",
-                      padding: "2px 6px",
-                      borderRadius: 6,
-                      fontWeight: 500
-                    }}>
-                      {agent.role}
-                    </span>
-                    <span style={{
-                      fontSize: 11,
-                      color: "#64748b",
-                      background: "rgba(51, 65, 85, 0.3)",
-                      padding: "2px 6px",
-                      borderRadius: 6,
-                      fontWeight: 500
-                    }}>
-                      {PROVIDER_DISPLAY_NAMES[agent.provider]}
-                    </span>
-                  </div>
-                  {agent.currentTask && (
-                    <div
-                      style={{
-                        fontSize: 11,
-                        color: "#cbd5e1",
-                        overflow: "hidden",
-                        textOverflow: "ellipsis",
-                        whiteSpace: "nowrap",
-                        fontWeight: 500,
-                        opacity: 0.8
-                      }}
-                    >
-                      {agent.currentTask}
-                    </div>
-                  )}
                 </div>
 
-                {/* Status indicator */}
+                {/* Name */}
+                <span
+                  style={{
+                    fontSize: 12,
+                    fontWeight: 700,
+                    color: "#e2e8f0",
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                    width: "100%",
+                    marginBottom: 4,
+                  }}
+                >
+                  {agent.name}
+                </span>
+
+                {/* Status pill */}
+                <span
+                  style={{
+                    fontSize: 9,
+                    color: statusCfg.color,
+                    background: `${statusCfg.color}15`,
+                    padding: "2px 8px",
+                    borderRadius: 6,
+                    fontWeight: 600,
+                    border: `1px solid ${statusCfg.color}25`,
+                    marginBottom: 6,
+                    letterSpacing: 0.3,
+                  }}
+                >
+                  {statusCfg.icon} {statusCfg.label}
+                </span>
+
+                {/* Role + Provider tags */}
+                <div
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 4,
+                    flexWrap: "nowrap",
+                    justifyContent: "center",
+                    width: "100%",
+                    overflow: "hidden",
+                  }}
+                >
+                  <span style={{
+                    fontSize: 9,
+                    color: agent.color,
+                    background: `${agent.color}12`,
+                    padding: "1px 6px",
+                    borderRadius: 4,
+                    fontWeight: 600,
+                    whiteSpace: "nowrap",
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    maxWidth: "45%",
+                  }}>
+                    {agent.role}
+                  </span>
+                  <span style={{
+                    fontSize: 9,
+                    color: "#64748b",
+                    background: "rgba(51, 65, 85, 0.4)",
+                    padding: "1px 6px",
+                    borderRadius: 4,
+                    fontWeight: 500,
+                    whiteSpace: "nowrap",
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    maxWidth: "55%",
+                  }}>
+                    {PROVIDER_DISPLAY_NAMES[agent.provider]}
+                  </span>
+                </div>
+
+                {/* Current task (if any) */}
+                {agent.currentTask && (
+                  <div
+                    style={{
+                      fontSize: 9,
+                      color: "#94a3b8",
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
+                      width: "100%",
+                      marginTop: 6,
+                      fontWeight: 500,
+                      opacity: 0.8,
+                      borderTop: "1px solid rgba(51, 65, 85, 0.3)",
+                      paddingTop: 6,
+                    }}
+                  >
+                    {agent.currentTask}
+                  </div>
+                )}
+
+                {/* Status dot (corner) */}
                 <motion.div
                   animate={{
-                    scale: [1, 1.2, 1],
-                    opacity: [0.6, 1, 0.6]
+                    scale: [1, 1.3, 1],
+                    opacity: [0.5, 1, 0.5],
                   }}
                   transition={{
                     duration: 2,
                     repeat: Infinity,
-                    ease: "easeInOut"
+                    ease: "easeInOut",
                   }}
                   style={{
-                    width: 10,
-                    height: 10,
+                    position: "absolute",
+                    top: 8,
+                    right: 8,
+                    width: 7,
+                    height: 7,
                     borderRadius: "50%",
-                    background: `linear-gradient(135deg, ${agent.color}, ${agent.color}cc)`,
-                    flexShrink: 0,
-                    boxShadow: `0 0 15px ${agent.color}60`,
-                    position: "relative",
-                    zIndex: 2
+                    background: agent.color,
+                    boxShadow: `0 0 8px ${agent.color}50`,
                   }}
                 />
               </motion.button>

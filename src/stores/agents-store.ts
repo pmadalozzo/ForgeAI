@@ -9,6 +9,28 @@ import type { LLMProvider } from "@/types/agents";
  * Cores, posições e zonas conforme CLAUDE.md.
  * Canvas: 920x770 com 4 zonas empilhadas.
  */
+/**
+ * Calcula posições centralizadas dentro de cada zona.
+ * Zonas: RESEARCH y=40 h=160, MANAGEMENT y=215 h=165, DEVELOPMENT y=400 h=165, QA y=585 h=165
+ * Card tem offset -24 no topo, então desk Y = zoneCenterY - cardHeight/2 + 24
+ */
+const ZONE_Y = {
+  research: 80,     // zona y=40, h=160 → centro ~120, desk ~80
+  management: 260,  // zona y=215, h=165 → centro ~297, desk ~260
+  development: 445, // zona y=400, h=165 → centro ~482, desk ~445
+  "qa-ops": 630,    // zona y=585, h=165 → centro ~667, desk ~630
+};
+
+/** Distribui N agentes horizontalmente dentro da zona (x=40, w=840) */
+function distributeX(count: number, index: number): number {
+  const zoneX = 40;
+  const zoneW = 840;
+  const cardW = 110;
+  const totalCards = count * cardW;
+  const gap = (zoneW - totalCards) / (count + 1);
+  return zoneX + gap + index * (cardW + gap);
+}
+
 const agentesIniciais: Agent[] = [
   // === Zona Research (topo) — 1 agente ===
   {
@@ -23,30 +45,13 @@ const agentesIniciais: Agent[] = [
     provider: "claude-code",
     linesWritten: 0,
     desk: {
-      position: { x: 430, y: 80 },
+      position: { x: distributeX(1, 0), y: ZONE_Y.research },
       items: ["pilha-papeis", "caneca-cafe"],
       zone: "research",
     },
   },
 
   // === Zona Management — 3 agentes ===
-  {
-    id: "orchestrator",
-    name: "Orquestrador",
-    emoji: "🎯",
-    color: "#3B82F6",
-    role: "orchestrator",
-    status: AgentStatus.Idle,
-    progress: 0,
-    currentTask: null,
-    provider: "claude-code",
-    linesWritten: 0,
-    desk: {
-      position: { x: 430, y: 250 },
-      items: ["caneca-cafe", "monitor-extra"],
-      zone: "management",
-    },
-  },
   {
     id: "pm",
     name: "Product Manager",
@@ -59,8 +64,25 @@ const agentesIniciais: Agent[] = [
     provider: "claude-code",
     linesWritten: 0,
     desk: {
-      position: { x: 200, y: 250 },
+      position: { x: distributeX(3, 0), y: ZONE_Y.management },
       items: ["pilha-papeis", "caneca-cafe"],
+      zone: "management",
+    },
+  },
+  {
+    id: "orchestrator",
+    name: "Orquestrador",
+    emoji: "🎯",
+    color: "#3B82F6",
+    role: "orchestrator",
+    status: AgentStatus.Idle,
+    progress: 0,
+    currentTask: null,
+    provider: "claude-code",
+    linesWritten: 0,
+    desk: {
+      position: { x: distributeX(3, 1), y: ZONE_Y.management },
+      items: ["caneca-cafe", "monitor-extra"],
       zone: "management",
     },
   },
@@ -76,7 +98,7 @@ const agentesIniciais: Agent[] = [
     provider: "claude-code",
     linesWritten: 0,
     desk: {
-      position: { x: 660, y: 250 },
+      position: { x: distributeX(3, 2), y: ZONE_Y.management },
       items: ["post-its", "caneca-cafe"],
       zone: "management",
     },
@@ -95,7 +117,7 @@ const agentesIniciais: Agent[] = [
     provider: "claude-code",
     linesWritten: 0,
     desk: {
-      position: { x: 200, y: 450 },
+      position: { x: distributeX(3, 0), y: ZONE_Y.development },
       items: ["vaso-planta", "caneca-cafe"],
       zone: "development",
     },
@@ -112,7 +134,7 @@ const agentesIniciais: Agent[] = [
     provider: "claude-code",
     linesWritten: 0,
     desk: {
-      position: { x: 430, y: 450 },
+      position: { x: distributeX(3, 1), y: ZONE_Y.development },
       items: ["caneca-cafe", "pilha-papeis"],
       zone: "development",
     },
@@ -129,7 +151,7 @@ const agentesIniciais: Agent[] = [
     provider: "claude-code",
     linesWritten: 0,
     desk: {
-      position: { x: 660, y: 450 },
+      position: { x: distributeX(3, 2), y: ZONE_Y.development },
       items: ["monitor-extra"],
       zone: "development",
     },
@@ -148,7 +170,7 @@ const agentesIniciais: Agent[] = [
     provider: "claude-code",
     linesWritten: 0,
     desk: {
-      position: { x: 100, y: 640 },
+      position: { x: distributeX(5, 0), y: ZONE_Y["qa-ops"] },
       items: ["pilha-papeis"],
       zone: "qa-ops",
     },
@@ -165,7 +187,7 @@ const agentesIniciais: Agent[] = [
     provider: "claude-code",
     linesWritten: 0,
     desk: {
-      position: { x: 260, y: 640 },
+      position: { x: distributeX(5, 1), y: ZONE_Y["qa-ops"] },
       items: ["caneca-cafe"],
       zone: "qa-ops",
     },
@@ -182,7 +204,7 @@ const agentesIniciais: Agent[] = [
     provider: "claude-code",
     linesWritten: 0,
     desk: {
-      position: { x: 420, y: 640 },
+      position: { x: distributeX(5, 2), y: ZONE_Y["qa-ops"] },
       items: ["monitor-extra", "caneca-cafe"],
       zone: "qa-ops",
     },
@@ -199,7 +221,7 @@ const agentesIniciais: Agent[] = [
     provider: "claude-code",
     linesWritten: 0,
     desk: {
-      position: { x: 580, y: 640 },
+      position: { x: distributeX(5, 3), y: ZONE_Y["qa-ops"] },
       items: ["vaso-planta", "post-its"],
       zone: "qa-ops",
     },
@@ -216,7 +238,7 @@ const agentesIniciais: Agent[] = [
     provider: "claude-code",
     linesWritten: 0,
     desk: {
-      position: { x: 740, y: 640 },
+      position: { x: distributeX(5, 4), y: ZONE_Y["qa-ops"] },
       items: ["post-its", "caneca-cafe"],
       zone: "qa-ops",
     },

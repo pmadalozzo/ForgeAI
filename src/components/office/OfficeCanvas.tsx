@@ -22,10 +22,10 @@ const ZOOM_STEP = 0.1;
 
 /** Configuracao das zonas do escritorio */
 export const ZONES = [
-  { label: "RESEARCH", x: 50, y: 50, w: 830, h: 155, color: "#A855F7" },
-  { label: "MANAGEMENT", x: 50, y: 220, w: 830, h: 155, color: "#3B82F6" },
-  { label: "DEVELOPMENT", x: 50, y: 405, w: 830, h: 155, color: "#10B981" },
-  { label: "QA & SECURITY", x: 50, y: 590, w: 830, h: 155, color: "#EF4444" },
+  { label: "RESEARCH", x: 40, y: 40, w: 840, h: 160, color: "#A855F7" },
+  { label: "MANAGEMENT", x: 40, y: 215, w: 840, h: 165, color: "#3B82F6" },
+  { label: "DEVELOPMENT", x: 40, y: 400, w: 840, h: 165, color: "#10B981" },
+  { label: "QA & SECURITY", x: 40, y: 585, w: 840, h: 165, color: "#EF4444" },
 ] as const;
 
 /** Estado do context menu */

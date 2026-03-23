@@ -22,6 +22,9 @@ interface GitHubAuth {
 export interface AuthState {
   github: GitHubAuth;
 
+  /** Flag que indica se loadGitHub ja completou (evita sync antes do load) */
+  _loaded: boolean;
+
   // --- Acoes ---
   setGitHubToken: (token: string, username: string, avatarUrl: string) => void;
   clearGitHub: () => void;
@@ -40,8 +43,9 @@ const INITIAL_GITHUB: GitHubAuth = {
 
 export const useAuthStore = create<AuthState>()(
   devtools(
-    (set) => ({
+    (set, get) => ({
       github: { ...INITIAL_GITHUB },
+      _loaded: false,
 
       setGitHubToken: (token, username, avatarUrl) => {
         set(
@@ -57,7 +61,8 @@ export const useAuthStore = create<AuthState>()(
           "setGitHubToken",
         );
 
-        // Sync com Supabase
+        // Sync com Supabase somente se load ja completou
+        if (!get()._loaded) return;
         const userId = useAppStore.getState().userId;
         if (userId) {
           syncGitHubToSupabase(userId, token, username, avatarUrl).catch(() => {
@@ -73,7 +78,8 @@ export const useAuthStore = create<AuthState>()(
           "clearGitHub",
         );
 
-        // Limpa no Supabase
+        // Limpa no Supabase somente se load ja completou
+        if (!get()._loaded) return;
         const userId = useAppStore.getState().userId;
         if (userId) {
           syncGitHubToSupabase(userId, null, null, null).catch(() => {
@@ -93,10 +99,13 @@ export const useAuthStore = create<AuthState>()(
                 avatarUrl: remote.avatarUrl,
                 isAuthenticated: true,
               },
+              _loaded: true,
             },
             false,
             "loadGitHub",
           );
+        } else {
+          set({ _loaded: true }, false, "loadGitHub/empty");
         }
       },
     }),

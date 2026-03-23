@@ -103,6 +103,7 @@ function App() {
   const [agentListOpen, setAgentListOpen] = useState(false);
   const [totalCost, setTotalCost] = useState("$0.00");
   const [sessionChecked, setSessionChecked] = useState(false);
+  const [settingsLoaded, setSettingsLoaded] = useState(false);
 
   const isAuthenticated = useAppStore((s) => s.isAuthenticated);
   const setAuthenticated = useAppStore((s) => s.setAuthenticated);
@@ -158,8 +159,11 @@ function App() {
     });
 
     if (userId) {
-      useSettingsStore.getState().loadSettings(userId).catch(() => {
+      useSettingsStore.getState().loadSettings(userId).then(() => {
+        setSettingsLoaded(true);
+      }).catch(() => {
         console.warn("[App] Falha ao carregar settings do Supabase");
+        setSettingsLoaded(true); // Marca como loaded mesmo em erro para não bloquear
       });
       useAuthStore.getState().loadGitHub(userId).catch(() => {
         console.warn("[App] Falha ao carregar GitHub do Supabase");
@@ -214,8 +218,10 @@ function App() {
     };
   }, [activeProjectId]);
 
-  // Auto-detecta API keys do ambiente
+  // Auto-detecta API keys do ambiente (só após settings carregadas)
   useEffect(() => {
+    if (!settingsLoaded) return;
+
     const state = useSettingsStore.getState();
 
     const envAnthropicKey = import.meta.env.ANTHROPIC_API_KEY as string;
@@ -241,16 +247,18 @@ function App() {
         enabled: true,
       });
     }
-  }, []);
+  }, [settingsLoaded]);
 
-  // Inicializa LLM Gateway
+  // Inicializa LLM Gateway (só após settings carregadas)
   useEffect(() => {
+    if (!settingsLoaded) return;
+
     configureLLMGateway();
     const unsubscribe = useSettingsStore.subscribe(() => {
       configureLLMGateway();
     });
     return unsubscribe;
-  }, []);
+  }, [settingsLoaded]);
 
   // Atualiza custo total
   useEffect(() => {

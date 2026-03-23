@@ -44,6 +44,8 @@ interface PhaseOutputs {
   prd: string;
   /** Output do Architect — injetado na Fase 3 */
   architecture: string;
+  /** Output do Designer (design spec) — injetado no Frontend na Fase 3 */
+  designSpec: string;
   /** Resumo dos arquivos reais criados na Fase 3 — injetado na Fase 4 */
   changedFilesSummary: string;
 }
@@ -594,6 +596,7 @@ class OrchestratorServiceImpl {
       research: "",
       prd: "",
       architecture: "",
+      designSpec: "",
       changedFilesSummary: "",
     };
 
@@ -676,42 +679,78 @@ class OrchestratorServiceImpl {
         continue;
       }
 
-      // Executa tarefas da fase em paralelo (respeitando batch size)
+      // Fase 3 (DEVELOPMENT): Designer cria design spec ANTES do Frontend começar
+      if (phaseNum === 3 && this.processing) {
+        const hasFrontendTask = enrichedTasks.some((t) => t.role === "frontend");
+        if (hasFrontendTask) {
+          const designOutput = await this.runDesignerPreDevelopment(phaseOutputs, settings, projectId);
+          if (designOutput.length > 0) {
+            phaseOutputs.designSpec = designOutput;
+            // Injeta o design spec nas tasks do frontend
+            for (let idx = 0; idx < enrichedTasks.length; idx++) {
+              if (enrichedTasks[idx]!.role === "frontend") {
+                enrichedTasks[idx] = {
+                  ...enrichedTasks[idx]!,
+                  description: `\n## Design Spec do Designer (SIGA EXATAMENTE)\n${designOutput.substring(0, 4000)}\n\n${enrichedTasks[idx]!.description}`,
+                };
+              }
+            }
+          }
+        }
+      }
+
+      // Executa tarefas da fase: roles DIFERENTES em paralelo, mesmo role em sequência.
+      // Isso permite frontend+backend+database em paralelo, mas se frontend tem 3 subtarefas,
+      // elas rodam uma após a outra (com --resume para manter contexto).
       const BATCH_SIZE = settings.maxParallelAgents ?? 4;
       const phaseResults: Map<string, string> = new Map();
 
-      for (let i = 0; i < enrichedTasks.length; i += BATCH_SIZE) {
+      // Agrupa tarefas por role para execução sequencial dentro do role
+      const tasksByRole = new Map<string, AgentTaskExecution[]>();
+      for (const exec of enrichedTasks) {
+        const roleKey = exec.role;
+        const existing = tasksByRole.get(roleKey) ?? [];
+        existing.push(exec);
+        tasksByRole.set(roleKey, existing);
+      }
+
+      // Cada role roda em paralelo, mas suas subtarefas rodam em sequência
+      const roleGroups = Array.from(tasksByRole.entries());
+      for (let i = 0; i < roleGroups.length; i += BATCH_SIZE) {
         if (!this.processing) break;
 
-        const batch = enrichedTasks.slice(i, i + BATCH_SIZE);
-        const promises = batch.map(async (exec) => {
-          if (!this.processing) return;
+        const batch = roleGroups.slice(i, i + BATCH_SIZE);
+        const promises = batch.map(async ([_role, roleTasks]) => {
+          // Executa subtarefas do mesmo role SEQUENCIALMENTE
+          for (const exec of roleTasks) {
+            if (!this.processing) return;
 
-          // Emite walking event: orquestrador caminha até o agente destino
-          eventBus.publish(EventType.AGENT_WALKING, {
-            agentId: `walk-${exec.agentId}-${Date.now()}`,
-            fromAgentId: "orchestrator",
-            toAgentId: exec.agentId,
-            label: (exec.description.substring(0, 35) + "...").replace(/\n/g, " "),
-            waypoints: [],
-            timestamp: new Date().toISOString(),
-          });
+            // Emite walking event: orquestrador caminha até o agente destino
+            eventBus.publish(EventType.AGENT_WALKING, {
+              agentId: `walk-${exec.agentId}-${Date.now()}`,
+              fromAgentId: "orchestrator",
+              toAgentId: exec.agentId,
+              label: (exec.description.substring(0, 35) + "...").replace(/\n/g, " "),
+              waypoints: [],
+              timestamp: new Date().toISOString(),
+            });
 
-          try {
-            const output = await this.executeAgentTask(exec, settings, projectId);
-            phaseResults.set(exec.role, output);
-          } catch (error) {
-            const errorMsg = error instanceof Error ? error.message : String(error);
-            console.error(`[OrchestratorService] Erro na tarefa ${exec.taskId} (Fase ${phaseNum}):`, errorMsg);
+            try {
+              const output = await this.executeAgentTask(exec, settings, projectId);
+              phaseResults.set(exec.role, output);
+            } catch (error) {
+              const errorMsg = error instanceof Error ? error.message : String(error);
+              console.error(`[OrchestratorService] Erro na tarefa ${exec.taskId} (Fase ${phaseNum}):`, errorMsg);
 
-            useChatStore.getState().addMessage(
-              exec.agentId,
-              `Erro ao executar tarefa: ${errorMsg}`,
-            );
+              useChatStore.getState().addMessage(
+                exec.agentId,
+                `Erro ao executar tarefa: ${errorMsg}`,
+              );
 
-            // Persiste status blocked no Supabase
-            updateTaskStatus(exec.taskId, "blocked", { reason: errorMsg }).catch(() => {});
-            agentRuntime.completeCurrentTask(exec.agentId, "failure", errorMsg);
+              // Persiste status blocked no Supabase
+              updateTaskStatus(exec.taskId, "blocked", { reason: errorMsg }).catch(() => {});
+              agentRuntime.completeCurrentTask(exec.agentId, "failure", errorMsg);
+            }
           }
         });
 
@@ -730,11 +769,11 @@ class OrchestratorServiceImpl {
         phaseOutputs.architecture = archOutput.startsWith("[Erro") ? "" : archOutput;
       }
 
-      // Fase 3 (DEVELOPMENT): após concluir, Designer revisa o frontend
+      // Fase 3 (DEVELOPMENT): após concluir, Designer revisa o que o Frontend fez
       if (phaseNum === 3 && this.processing) {
         const hasFrontendTask = phaseTasks.some((t) => t.role === "frontend");
         if (hasFrontendTask) {
-          await this.runDesignerReview(executions, phaseOutputs, settings, projectId);
+          await this.runDesignerPostReview(executions, phaseOutputs, settings, projectId);
         }
       }
 
@@ -1303,10 +1342,147 @@ ${codeToReview.substring(0, 6000)}`,
   }
 
   /**
-   * Revisão do Designer após Fase 3 (Development).
+   * Designer PRÉ-DESENVOLVIMENTO: cria design spec ANTES do Frontend.
+   * Define paleta, layout, componentes, hierarquia visual.
+   * Roda no início da Fase 3, antes de qualquer task de dev.
+   */
+  private async runDesignerPreDevelopment(
+    phaseOutputs: PhaseOutputs,
+    settings: ReturnType<typeof useSettingsStore.getState>,
+    projectId: string,
+  ): Promise<string> {
+    const designerDefaults = settings.agentDefaults.designer;
+    if (!designerDefaults || !settings.isProviderConfigured(designerDefaults.provider)) {
+      console.log("[OrchestratorService] Designer sem provider configurado, pulando design spec");
+      return "";
+    }
+
+    const agentStore = useAgentsStore.getState();
+    const designerAgent = agentStore.agents.find((a) => a.role === "designer");
+    if (!designerAgent) return "";
+
+    const project = await this.getProjectContext();
+
+    useChatStore.getState().addMessage(
+      "orchestrator",
+      "Enviando para o **Designer** criar as especificações visuais ANTES do Frontend começar...",
+    );
+
+    // Walker visual: Orchestrator → Designer
+    eventBus.publish(EventType.AGENT_WALKING, {
+      agentId: `walk-designer-pre-${Date.now()}`,
+      fromAgentId: "orchestrator",
+      toAgentId: designerAgent.id,
+      label: "Design Spec",
+      waypoints: [],
+      timestamp: new Date().toISOString(),
+    });
+
+    agentStore.setAgentStatus(designerAgent.id, AgentStatus.Working);
+    agentStore.setAgentTask(designerAgent.id, "Criando especificações visuais...");
+
+    try {
+      llmGateway.setAgentConfig(designerAgent.id, designerDefaults.provider, designerDefaults.model);
+
+      const designExec: AgentTaskExecution = {
+        taskId: crypto.randomUUID(),
+        agentId: designerAgent.id,
+        role: "designer",
+        description: `Voce e o UI/UX Designer SENIOR. Crie um DESIGN SPEC detalhado para o Frontend Developer implementar.
+
+## Contexto
+${project?.name ? `Projeto: ${project.name}` : ""}
+${project?.description ? `Descricao: ${project.description}` : ""}
+${phaseOutputs.prd ? `\n## PRD\n${phaseOutputs.prd.substring(0, 3000)}` : ""}
+${phaseOutputs.architecture ? `\n## Arquitetura\n${phaseOutputs.architecture.substring(0, 3000)}` : ""}
+${phaseOutputs.research ? `\n## Pesquisa\n${phaseOutputs.research.substring(0, 2000)}` : ""}
+
+## O QUE VOCE DEVE ENTREGAR
+
+Crie um documento de especificacao visual completo com:
+
+### 1. Design System
+- Paleta de cores (primary, secondary, accent, neutral, success, warning, error) com hex codes
+- Tipografia (font-family, tamanhos h1-h6, body, small, line-height)
+- Espacamento (escala: 4, 8, 12, 16, 24, 32, 48, 64px)
+- Border radius (sm, md, lg, xl)
+- Sombras (sm, md, lg)
+
+### 2. Layout de cada Pagina/Tela
+Para CADA pagina do app, descreva:
+- Estrutura do layout (header, sidebar, main, footer)
+- Hierarquia visual (o que deve chamar mais atencao)
+- Componentes necessarios e como devem se parecer
+- Espacamento entre secoes
+- Comportamento responsive (mobile, tablet, desktop)
+
+### 3. Componentes Reutilizaveis
+Liste cada componente com:
+- Nome do componente
+- Props esperadas
+- Variantes (primary, secondary, outline, ghost para botoes; sizes: sm, md, lg)
+- Estados (hover, active, disabled, loading, error)
+- Classes Tailwind especificas a usar
+
+### 4. Interacoes e Animacoes
+- Transicoes entre paginas
+- Hover effects
+- Loading states e skeletons
+- Empty states
+- Error states
+- Toast/notification patterns
+
+### 5. Referencias Visuais
+- Compare com Stripe, Linear, Vercel, Notion
+- O design NAO pode parecer generico ou "feito por IA"
+- Evitar: bordas excessivas, cards com shadow demais, cores saturadas demais, espacamento inconsistente
+- Preferir: design limpo, muito white space, hierarquia clara, cores subtis
+
+## REGRAS
+- NAO crie arquivos de codigo. Apenas o documento de especificacao.
+- Seja ESPECIFICO: use classes Tailwind reais (ex: "bg-slate-900 text-slate-100 p-6 rounded-xl")
+- O Frontend vai seguir este spec EXATAMENTE, entao seja preciso.
+- O resultado deve parecer um app PROFISSIONAL, nao um projeto de tutorial.`,
+        phase: 3,
+      };
+
+      const output = await this.executeAgentTask(designExec, settings, projectId);
+
+      // Walker visual: Designer → Frontend (entregando spec)
+      const frontendAgent = agentStore.agents.find((a) => a.role === "frontend");
+      if (frontendAgent) {
+        eventBus.publish(EventType.AGENT_WALKING, {
+          agentId: `walk-designer-to-front-${Date.now()}`,
+          fromAgentId: designerAgent.id,
+          toAgentId: frontendAgent.id,
+          label: "Design Spec",
+          waypoints: [],
+          timestamp: new Date().toISOString(),
+        });
+      }
+
+      agentStore.setAgentStatus(designerAgent.id, AgentStatus.Done);
+      agentStore.setAgentTask(designerAgent.id, "Design Spec entregue");
+
+      useChatStore.getState().addMessage(
+        "orchestrator",
+        "Designer entregou o **Design Spec** para o Frontend. Iniciando desenvolvimento...",
+      );
+
+      return output.startsWith("[Erro") ? "" : output;
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      console.warn(`[OrchestratorService] Designer pre-dev falhou: ${msg}`);
+      agentStore.setAgentStatus(designerAgent.id, AgentStatus.Blocked);
+      return "";
+    }
+  }
+
+  /**
+   * Revisão do Designer APÓS Fase 3 (Development).
    * O Designer analisa o trabalho do Frontend e pode reprovar.
    */
-  private async runDesignerReview(
+  private async runDesignerPostReview(
     _allExecutions: AgentTaskExecution[],
     phaseOutputs: PhaseOutputs,
     settings: ReturnType<typeof useSettingsStore.getState>,
@@ -1569,9 +1745,24 @@ REGRAS:
 - tailwind.config.ts configurado
 - index.html com root div
 - Estrutura de pastas (src/components, src/pages, src/hooks, src/utils, src/types)`,
-      frontend: `Voce e o Frontend Developer. Implemente componentes React completos:
+      frontend: `Voce e o Frontend Developer SENIOR. Implemente interfaces PROFISSIONAIS que parecem apps reais (Stripe, Linear, Vercel).
+
+## REGRAS DE DESIGN (OBRIGATORIAS):
+- Se recebeu um Design Spec do Designer, SIGA EXATAMENTE as cores, espacamentos e componentes definidos.
+- NUNCA use cores genericas/defaults. Use a paleta do design spec ou crie uma paleta sofisticada.
+- Espacamento generoso: padding minimo p-4 em cards, gap-4 entre elementos, py-16 entre secoes.
+- Hierarquia visual clara: h1 grande e bold, h2 medio, body normal, muted para textos secundarios.
+- NAO use bordas em tudo. Prefira sombras sutis (shadow-sm) e background sutil (bg-slate-50/bg-slate-900).
+- NAO use cores saturadas demais. Prefira tons suaves (slate, zinc, neutral para base; indigo/violet/emerald para accent).
+- Cantos arredondados consistentes: rounded-lg ou rounded-xl (nunca misturar).
+- SEMPRE implemente: hover states, focus-visible rings, transitions (transition-colors duration-150).
+- SEMPRE implemente: loading states (skeleton ou spinner), empty states, error states.
+- Mobile-first: comece com mobile e adicione breakpoints (sm:, md:, lg:).
+- Icones: use lucide-react (instale se necessario). NUNCA use emojis como icones na UI.
+
+## TECNICO:
 - Componentes funcionais com TypeScript strict
-- Estilos com Tailwind CSS (classes utilitarias)
+- Estilos com Tailwind CSS (classes utilitarias, NUNCA inline styles)
 - Imports relativos (./components/X, nunca @/components/X)
 - Cada componente deve ser funcional e renderizavel
 - Inclua o App.tsx e main.tsx se nao existirem`,
@@ -1607,14 +1798,58 @@ Voce e como um Diretor de Arte que revisa o trabalho do Frontend Dev. Voce anali
 - Cada problema deve ser uma instrucao clara para o Frontend: "No arquivo X, componente Y, alterar Z"
 - Seja EXIGENTE — interfaces mediocres devem ser reprovadas
 - Criterios: Tailwind CSS (nunca inline), espacamento consistente (4/8/12/16/24/32/48px), hierarquia h1>h2>body, contraste WCAG AA, mobile-first`,
-      researcher: `Voce e um Pesquisador de Mercado do ForgeAI. Use WebSearch e WebFetch para pesquisar dados da empresa/cliente:
-1. Dados da empresa (historia, fundacao, tamanho, localizacao)
-2. Identidade visual (cores, logo, fontes, estilo de design)
-3. Produtos e servicos oferecidos
-4. Concorrentes diretos e posicionamento no mercado
-5. Presenca online (site oficial, redes sociais, avaliacoes)
-6. Publico-alvo e perfil de clientes
-Compile um relatorio em Markdown com secoes claras.`,
+      researcher: `Voce e um Pesquisador de Mercado e Identidade Visual SENIOR do ForgeAI.
+
+## OBJETIVO PRINCIPAL
+Pesquisar TUDO sobre a empresa/cliente para que o Designer e Frontend criem algo fiel a marca.
+
+## PASSOS OBRIGATORIOS (execute TODOS):
+
+### 1. Identidade Visual (PRIORIDADE MAXIMA)
+Use WebSearch e WebFetch para encontrar:
+- **Logo**: URL da logo oficial (busque no site, favicon, redes sociais, Google Images com "site:dominio.com logo")
+- **Cores da marca**: Extraia as cores HEX do site oficial (header, botoes, links, footer). Se necessario, acesse o CSS do site.
+- **Fontes**: Identifique as fontes usadas no site (Google Fonts, system fonts)
+- **Tom visual**: Minimalista? Corporativo? Moderno? Jovem? Luxo?
+- **Favicon/Icon**: URL do favicon para referencia
+
+### 2. Dados da Empresa
+- Nome oficial completo
+- Historia, fundacao, missao
+- Tamanho (funcionarios, receita se publica)
+- Localizacao (sede, filiais)
+
+### 3. Produtos e Servicos
+- Lista completa de produtos/servicos
+- Precos se disponiveis publicamente
+- Diferenciais competitivos
+
+### 4. Presenca Digital
+- Site oficial (URL exata)
+- Redes sociais (Instagram, LinkedIn, Twitter, Facebook)
+- App mobile (se existir)
+- Estilo de comunicacao (formal, casual, tecnico)
+
+### 5. Concorrentes
+- 3-5 concorrentes diretos
+- Como se diferencia de cada um
+
+### 6. Publico-alvo
+- Perfil demografico
+- Necessidades e dores
+
+## FORMATO DO RELATORIO
+Compile em Markdown com secoes claras. A secao de IDENTIDADE VISUAL deve ser a PRIMEIRA e mais detalhada, com:
+- Cores primarias e secundarias (HEX codes)
+- URL da logo (se encontrada)
+- Fonts identificadas
+- Screenshots de referencia do site/app
+
+## REGRAS
+- Use WebSearch para CADA item. NAO invente informacoes.
+- Se nao encontrar algo, diga "NAO ENCONTRADO" em vez de inventar.
+- Acesse o site oficial com WebFetch para extrair cores e fonts reais.
+- Busque imagens da logo: "[nome empresa] logo png" ou "site:dominio.com"`,
     };
 
     return `${rolePrompts[role]}${projectCtx}${projectMemCtx}${devMemCtx}${baseInstructions}`;
@@ -1763,10 +1998,15 @@ Compile um relatorio em Markdown com secoes claras.`,
       agentId: devopsAgent.id,
       role: "devops",
       description: `Crie as configurações de build e deploy para o projeto:
-1. Dockerfile multi-stage (build + runtime)
-2. docker-compose.yml para desenvolvimento local
-3. CI/CD pipeline (GitHub Actions) com lint, test e build
-4. Scripts utilitários (start, build, deploy) se necessário
+
+1. Verifique se package.json existe e rode \`npm install\` para instalar dependencias
+2. Rode \`npm run build\` para verificar se o projeto compila sem erros. Se houver erros, CORRIJA-OS.
+3. Crie Dockerfile multi-stage (build + runtime) se nao existir
+4. Crie docker-compose.yml para desenvolvimento local se nao existir
+5. Crie CI/CD pipeline (GitHub Actions) com lint, test e build se nao existir
+
+IMPORTANTE: NAO rode \`npm run dev\` — o servidor sera iniciado automaticamente pelo sistema apos voce terminar.
+Seu foco e: instalar deps, verificar build, criar configs de deploy, e CORRIGIR erros se houver.
 
 ${project?.name ? `Projeto: ${project.name}` : ""}
 ${phaseOutputs.architecture ? `\n## Arquitetura\n${phaseOutputs.architecture.substring(0, 3000)}` : ""}
@@ -1776,11 +2016,58 @@ ${projectFiles ? `\n## Arquivos do projeto\n${projectFiles.substring(0, 4000)}` 
 
     try {
       await this.executeAgentTask(devopsExec, settings, projectId);
+
+      // SEMPRE inicia o servidor após DevOps terminar (DevOps só cria configs, não roda dev)
+      if (project?.localPath) {
+        await this.startDevServer(project.localPath);
+      }
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
       console.warn(`[OrchestratorService] DevOps delivery falhou: ${msg}`);
       agentStore.setAgentStatus(devopsAgent.id, AgentStatus.Blocked);
       agentStore.setAgentTask(devopsAgent.id, `Erro: ${msg.substring(0, 50)}`);
+
+      // Mesmo com erro no DevOps, tenta iniciar o servidor
+      if (project?.localPath) {
+        await this.startDevServer(project.localPath);
+      }
+    }
+  }
+
+  /**
+   * Inicia o dev server do projeto e abre no browser.
+   * Usa o endpoint /api/claude/execute para rodar npm run dev em background.
+   */
+  private async startDevServer(projectPath: string): Promise<void> {
+    try {
+      useChatStore.getState().addMessage(
+        "orchestrator",
+        "Iniciando servidor de desenvolvimento...",
+      );
+
+      // Primeiro instala dependências
+      await fetch("/api/claude/execute", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          args: ["-p", "Execute: npm install", "--output-format", "json", "--max-turns", "3", "--dangerously-skip-permissions"],
+          cwd: projectPath,
+        }),
+      });
+
+      // Inicia o dev server em background (não espera terminar)
+      fetch("/api/dev-server/start", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ cwd: projectPath }),
+      }).catch(() => {});
+
+      useChatStore.getState().addMessage(
+        "orchestrator",
+        "Servidor de desenvolvimento iniciado. Abrindo no browser...",
+      );
+    } catch (err) {
+      console.warn("[OrchestratorService] Falha ao iniciar dev server:", err);
     }
   }
 

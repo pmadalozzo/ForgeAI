@@ -12,6 +12,9 @@ import { chromium } from "playwright";
 /** Map de processos Claude ativos, chave = timestamp de criação */
 const activeProcesses = new Map<string, ChildProcess>();
 
+/** Dev server do projeto do usuário (iniciado pelo DevOps) */
+let userDevServer: ChildProcess | null = null;
+
 /** Último dev server de screenshot (para matar antes de iniciar outro) */
 let lastScreenshotProc: ChildProcess | null = null;
 
@@ -223,6 +226,97 @@ function forgeApiPlugin(): Plugin {
         } catch { /* netstat falhou — ignora */ }
 
         json(res, { success: true, killed: count });
+      });
+
+      // ── POST /api/dev-server/start ─────────────────────────────────────
+      // Inicia o dev server do projeto do usuário e abre no browser
+      server.middlewares.use("/api/dev-server/start", async (req, res) => {
+        if (req.method !== "POST") { json(res, { error: "Use POST" }, 405); return; }
+
+        try {
+          const body = JSON.parse(await readBody(req)) as { cwd: string; port?: number };
+          const cwd = body.cwd;
+          const port = body.port ?? 5173;
+
+          if (!cwd) {
+            json(res, { success: false, error: "cwd é obrigatório" }, 400);
+            return;
+          }
+
+          // Mata dev server anterior se existir
+          if (userDevServer) {
+            try { userDevServer.kill(); } catch { /* já morreu */ }
+            userDevServer = null;
+          }
+
+          console.log(`[forge-api] Iniciando dev server em ${cwd}`);
+
+          // Verifica se package.json existe
+          const pkgPath = path.join(cwd, "package.json");
+          if (!fs.existsSync(pkgPath)) {
+            json(res, { success: false, error: "package.json não encontrado" });
+            return;
+          }
+
+          // npm install se node_modules não existe
+          const nodeModules = path.join(cwd, "node_modules");
+          if (!fs.existsSync(nodeModules)) {
+            console.log("[forge-api] Instalando dependências...");
+            try {
+              execSync("npm install", { cwd, encoding: "utf-8", timeout: 120_000, windowsHide: true, stdio: "pipe" });
+            } catch (installErr) {
+              console.warn("[forge-api] npm install falhou:", installErr);
+            }
+          }
+
+          // Inicia npm run dev
+          userDevServer = spawn("npm", ["run", "dev", "--", "--port", String(port), "--open"], {
+            cwd,
+            stdio: ["ignore", "pipe", "pipe"],
+            shell: true,
+            windowsHide: true,
+            env: { ...process.env },
+          });
+
+          let serverUrl = "";
+
+          // Captura a URL do servidor
+          userDevServer.stdout?.on("data", (chunk: Buffer) => {
+            const text = chunk.toString();
+            console.log(`[forge-api] dev-server stdout: ${text.trim()}`);
+            const urlMatch = text.match(/https?:\/\/localhost[:\d]*/);
+            if (urlMatch && !serverUrl) {
+              serverUrl = urlMatch[0];
+              console.log(`[forge-api] Dev server disponível em ${serverUrl}`);
+            }
+          });
+
+          userDevServer.stderr?.on("data", (chunk: Buffer) => {
+            console.log(`[forge-api] dev-server stderr: ${chunk.toString().trim()}`);
+          });
+
+          userDevServer.on("close", (code) => {
+            console.log(`[forge-api] Dev server encerrou (code=${code})`);
+            userDevServer = null;
+          });
+
+          userDevServer.on("error", (err) => {
+            console.error(`[forge-api] Dev server spawn error:`, err.message);
+            userDevServer = null;
+          });
+
+          // Espera até 15s pela URL aparecer, senão retorna com porta padrão
+          const startWait = Date.now();
+          while (!serverUrl && Date.now() - startWait < 15_000) {
+            await new Promise((r) => setTimeout(r, 500));
+          }
+
+          if (!serverUrl) serverUrl = `http://localhost:${port}`;
+
+          json(res, { success: true, url: serverUrl });
+        } catch (err) {
+          json(res, { success: false, error: String(err) });
+        }
       });
 
       // ── GET /api/claude/version ───────────────────────────────────────

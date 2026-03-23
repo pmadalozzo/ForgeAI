@@ -220,6 +220,7 @@ export class ClaudeProvider implements ILLMProvider {
         "--output-format", "json",
         "--model", effectiveModel,
         "--effort", isOrchestrator ? "medium" : this.getEffortForAgent(agentKey),
+        "--max-turns", isOrchestrator ? "3" : this.getMaxTurnsForAgent(agentKey),
       );
 
       // Orchestrator: --system-prompt SUBSTITUI o system prompt built-in do CLI.
@@ -260,6 +261,7 @@ export class ClaudeProvider implements ILLMProvider {
           "--output-format", "json",
           "--model", effectiveModel,
           "--effort", isOrchestrator ? "medium" : this.getEffortForAgent(agentKey),
+          "--max-turns", isOrchestrator ? "3" : this.getMaxTurnsForAgent(agentKey),
         ];
         if (isOrchestrator) {
           retryArgs.push("--no-session-persistence");
@@ -414,6 +416,19 @@ export class ClaudeProvider implements ILLMProvider {
       return state.claudeEffort ?? "high";
     } catch { /* fallback */ }
     return "high";
+  }
+
+  /** Max turns por role — roles simples precisam de menos turnos */
+  private getMaxTurnsForAgent(agentId: string): string {
+    switch (agentId) {
+      case "devops": return "8";
+      case "pm": return "5";
+      case "reviewer": return "5";
+      case "security": return "5";
+      case "designer": return "10";
+      case "researcher": return "10";
+      default: return "15"; // frontend, backend, database, architect
+    }
   }
 
   private calculateCost(model: string, inputTokens: number, outputTokens: number): number {

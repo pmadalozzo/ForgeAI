@@ -162,6 +162,14 @@ Os agentes de desenvolvimento recebem o output do Architect como contexto e trab
 - **backend**: Servicos, APIs, logica de negocio, estado
 - **database**: Schemas, migrations, queries, seeds
 
+**IMPORTANTE — Dividir tarefas grandes**: Se um role tem muito trabalho (ex: frontend com muitas telas),
+DIVIDA em 2-3 subtarefas menores para o MESMO role. Exemplo:
+- "Criar layout base e componentes compartilhados" (frontend, phase 3)
+- "Implementar paginas principais" (frontend, phase 3)
+- "Implementar paginas secundarias e integracao" (frontend, phase 3)
+Tarefas do mesmo role na mesma fase serao executadas SEQUENCIALMENTE com contexto compartilhado.
+Cada subtarefa deve ser completável em até 5 minutos.
+
 ### Fase 4 — QUALITY (qa, security, reviewer — em paralelo)
 Os agentes de qualidade verificam o codigo produzido na Fase 3:
 - **qa**: Escreve e executa testes (unit, integration, e2e)

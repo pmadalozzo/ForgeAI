@@ -175,6 +175,73 @@ describe('ProductCard', () => {
 - describe: nome da funcao/componente
 - it/test: comece com "deve" (ex: "deve criar produto com dados validos")
 
+### Testes Visuais com Playwright (Webapp Testing)
+
+Alem de testes unitarios, use Playwright para testar a aplicacao renderizada no browser.
+
+#### Padrao: Reconnaissance-Then-Action
+
+1. Inicie o dev server: npm run dev
+2. Navegue e ESPERE carregar:
+   page.goto('http://localhost:5173')
+   page.wait_for_load_state('networkidle')  # CRITICO: espere o JS executar
+3. Capture screenshot para inspecionar o estado real:
+   page.screenshot(path='/tmp/inspect.png', full_page=True)
+4. Identifique seletores do DOM renderizado
+5. Execute acoes e verifique resultados
+
+#### Script de Teste Visual
+
+```typescript
+import { test, expect } from '@playwright/test'
+
+test('pagina principal carrega corretamente', async ({ page }) => {
+  await page.goto('http://localhost:5173')
+  await page.waitForLoadState('networkidle')
+
+  // Verifica que elementos principais existem
+  await expect(page.locator('h1')).toBeVisible()
+  await expect(page.locator('nav')).toBeVisible()
+
+  // Screenshot para evidencia
+  await page.screenshot({ path: 'test-results/home.png', fullPage: true })
+})
+
+test('navegacao entre paginas funciona', async ({ page }) => {
+  await page.goto('http://localhost:5173')
+  await page.waitForLoadState('networkidle')
+
+  // Clica no primeiro link de navegacao
+  const navLinks = page.locator('nav a')
+  if (await navLinks.count() > 1) {
+    await navLinks.nth(1).click()
+    await page.waitForLoadState('networkidle')
+    await page.screenshot({ path: 'test-results/page2.png', fullPage: true })
+  }
+})
+
+test('responsividade mobile', async ({ page }) => {
+  await page.setViewportSize({ width: 375, height: 812 })
+  await page.goto('http://localhost:5173')
+  await page.waitForLoadState('networkidle')
+
+  // Verifica que nao tem scroll horizontal
+  const bodyWidth = await page.evaluate(() => document.body.scrollWidth)
+  const viewportWidth = await page.evaluate(() => window.innerWidth)
+  expect(bodyWidth).toBeLessThanOrEqual(viewportWidth + 1)
+
+  await page.screenshot({ path: 'test-results/mobile.png', fullPage: true })
+})
+```
+
+#### Decisao: Quando usar Playwright vs Vitest
+
+- HTML estatico → Leia o arquivo e identifique seletores → Playwright
+- Componentes isolados → @testing-library/react + Vitest
+- Fluxos de usuario (login, formulario, navegacao) → Playwright
+- Responsividade e layout → Playwright com viewport diferente
+- Logica de negocio → Vitest unitario
+
 ### O Que NUNCA Fazer
 
 - NUNCA escreva testes que sempre passam (ex: expect(true).toBe(true))
@@ -182,6 +249,7 @@ describe('ProductCard', () => {
 - NUNCA teste implementacao interna — teste comportamento
 - NUNCA use snapshots como substituto de assertions reais
 - NUNCA deixe testes flaky (que passam as vezes) — corrija ou remova
+- NUNCA inspecione o DOM antes de esperar networkidle em apps dinamicos
 ```
 
 ## Checklist de Qualidade
